@@ -1,3 +1,3 @@
 .map { display: block; width: 100%; height: 100%; color: var(--ink); background: transparent; overflow: visible; }
-.unit { cursor: pointer; stroke: var(--accent); filter: drop-shadow(0 0 3px var(--accent)); }
+.unit { cursor: pointer; }
 .unit:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; stroke-width: 3; }

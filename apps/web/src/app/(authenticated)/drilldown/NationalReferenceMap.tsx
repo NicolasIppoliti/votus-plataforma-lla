@@ -1,6 +1,6 @@
 "use client";
 
-import { REFERENCE_FILL, REFERENCE_LINE } from "@/components/maps/reference-colors";
+import { REFERENCE_FILL, REFERENCE_LINE, REFERENCE_STYLE, Legend } from "@/components/maps/reference-colors";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import styles from "./drilldown.module.css";
@@ -104,10 +104,11 @@ export function NationalReferenceMap() {
         <h3 id="polar-heading">Vista completa desde el polo sur</h3>
         <p>Proyección azimutal equivalente independiente, a otra escala. Incluye los 1980 componentes de la referencia IGN; no representa cobertura electoral.</p>
         {polarPath ? <svg viewBox="0 0 400 400" role="img" aria-label="Extensión completa de la referencia IGN en proyección polar, sin resultados electorales" className={styles.polarMap}>
-          <path d={polarPath} fillRule="evenodd" />
+          <path d={polarPath} style={REFERENCE_STYLE} fillRule="evenodd" />
         </svg> : <p>La vista polar estará disponible cuando se verifique la geometría.</p>}
       </section>
     </div> : null}
+    <Legend label="Referencia nacional" entries={[{ label: "Contorno de referencia IGN; sin resultados electorales", encoding: "outline" }]} />
     <p className={styles.attribution}>Fuente: IGN · Derivado simplificado de referencia ({NATIONAL_REFERENCE_PATH.split(".")[1]}). Precisión cartográfica derivada; no son límites electorales.</p>
     <a href="#province-reference-heading">Ir a Buenos Aires</a>
     <a href="#national-reference-heading">Volver a Argentina</a>

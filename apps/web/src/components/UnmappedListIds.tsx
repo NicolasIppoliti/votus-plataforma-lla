@@ -1,5 +1,6 @@
 import { Alert } from "@/components/ui/alert";
 import type { ReactNode } from "react";
+import { formatCount } from "@/lib/format/number";
 import {
   describeExcluded,
   type ExcludedByKind,
@@ -64,7 +65,7 @@ export function UnmappedListIds({
       ? describeExcluded(noListId)
       : Object.entries(noListId)
           .filter(([, tally]) => tally.rows > 0)
-          .map(([kind, tally]) => `${tally.rows} fila(s) ${kind}`)
+          .map(([kind, tally]) => `${formatCount(tally.rows)} fila(s) ${kind}`)
           .join(", ") || null;
   const noListIdRows = Object.values(noListId).reduce(
     (sum, tally) => sum + tally.rows,
@@ -80,8 +81,8 @@ export function UnmappedListIds({
       {rows === 0 ? null : (
         <Alert variant="unavailable">
           {label ? `${label}: ` : ""}
-          {rows} de {totalRows} filas
-          {unsummable === null ? ` (${votes} votos)` : ""}{" "}
+          {formatCount(rows)} de {formatCount(totalRows)} filas
+          {unsummable === null ? ` (${formatCount(votes)} votos)` : ""}{" "}
           {mappingConfigured
             ? "se resolvieron sin un partido curado"
             : "no se pudieron resolver porque no hay una fuente de mapeo curado configurada para esta lectura"}
@@ -93,8 +94,8 @@ export function UnmappedListIds({
         <ul>
           {entries.map((entry) => (
             <li key={entry.listId}>
-              {entry.listId}: {entry.rows} filas
-              {unsummable === null ? `, ${entry.votes} votos` : ""}
+              {entry.listId}: {formatCount(entry.rows)} filas
+              {unsummable === null ? `, ${formatCount(entry.votes)} votos` : ""}
             </li>
           ))}
         </ul>
@@ -105,7 +106,7 @@ export function UnmappedListIds({
         // survives review.
         <p role="note">
           {label ? `${label}: ` : ""}
-          {noListIdRows} fila(s) no tienen id de lista: no son identificadores
+          {formatCount(noListIdRows)} fila(s) no tienen id de lista: no son identificadores
           de lista que no se hayan podido mapear. Se informan por separado, sin
           un partido asignado; no se descartan silenciosamente. Por tipo de
           fuente: {noListIdSummary}.

@@ -8,12 +8,11 @@ import styles from "./comparison.module.css";
 import { ComparisonChildren } from "./ComparisonChildren";
 import { ComparisonPartyContext } from "./ComparisonMap";
 import type { OfficialSectionCircuitOutcomes } from "@/lib/workspace/official-section-circuit-outcomes";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
-const decimal = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const integer = new Intl.NumberFormat("es-AR");
-const share = (value: number) => `${decimal.format(value)} %`;
-const delta = (value: number) => `${value > 0 ? "+" : ""}${decimal.format(value)} pp`;
-const votes = (value: number) => `${value > 0 ? "+" : ""}${integer.format(value)} votos`;
+const share = (value: number) => `${formatFixed2(value)} %`;
+const delta = (value: number) => `${value > 0 ? "+" : ""}${formatFixed2(value)} pp`;
+const votes = (value: number) => `${value > 0 ? "+" : ""}${formatCount(value)} votos`;
 
 function Completeness({ value, side }: { value: OfficialSectionCompleteness; side: string }) {
   if (value.status === "unavailable") return <p>{side}: Completitud no disponible.</p>;
@@ -46,7 +45,7 @@ export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, m
         <select id="compare-party" value={party} onChange={event => setParty(event.target.value)}>{swing.swings.map(entry => <option key={entry.party} value={entry.party}>{leftNames[entry.party]} / {rightNames[entry.party]}</option>)}</select>
         <div className={styles.pairedFigures}>{[{ value: a, label: "A · 2023", names: leftNames, total: swing.shares2023 }, { value: b, label: "B · 2025", names: rightNames, total: swing.shares2025 }].map(({ value, label, names, total }) => <div key={label}>
           <span>{label}</span><p>{names[party]}</p><strong>{value ? share(value.sharePercent) : "Observación no disponible"}</strong><small>Participación sobre votos partidarios incluidos</small>
-          <dl><dt>Votos de agrupación</dt><dd>{value ? integer.format(value.votes) : "Observación no disponible"}</dd><dt>Total incluido</dt><dd>{integer.format(total.reduce((sum, entry) => sum + entry.votes, 0))}</dd></dl>
+          <dl><dt>Votos de agrupación</dt><dd>{value ? formatCount(value.votes) : "Observación no disponible"}</dd><dt>Total incluido</dt><dd>{formatCount(total.reduce((sum, entry) => sum + entry.votes, 0))}</dd></dl>
         </div>)}</div>
         <div className={styles.deltaReading}><span>Cambio B − A</span><strong>{a && b ? delta(b.sharePercent - a.sharePercent) : "Observación no disponible"}</strong><small>Puntos porcentuales, no crecimiento porcentual.</small><span>Votos B − A</span><p>{a && b ? votes(b.votes - a.votes) : "Observación no disponible"}</p></div>
       </section>

@@ -15,6 +15,7 @@ import {
 } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR, createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
+import { formatCount } from "@/lib/format/number";
 import type {
   AuthorizedFiscalizacionCoverage,
   AuthorizedFiscalizacionResult,
@@ -138,7 +139,7 @@ function renderExclusions(
       <ul aria-label={label}>
         {collection.items.map((item, index) => (
           <li key={`${item.reason}-${index}`}>
-            {item.reason}: {item.rows} filas
+            {item.reason}: {formatCount(item.rows)} filas
           </li>
         ))}
       </ul>
@@ -367,7 +368,7 @@ function CoverageQualification({
       ) : null}
       {result.rows.truncated ? (
         <p role="note">
-          Detalle acotado: {result.rows.items.length} de {result.rows.total} filas de
+          Detalle acotado: {result.rows.items.length} de {formatCount(result.rows.total)} filas de
           resultado.
         </p>
       ) : null}
@@ -477,8 +478,8 @@ function ResultEvidence({
           <ul aria-label="Listas no mapeadas">
             {value.unmapped.items.map((item, index) => (
               <li key={`${item.list_id}-${index}`}>
-                Sin mapeo: {item.list_id ?? "Sin lista"}; {item.votes} votos,{" "}
-                {item.rows} filas
+                Sin mapeo: {item.list_id ?? "Sin lista"}; {formatCount(item.votes)} votos,{" "}
+                {formatCount(item.rows)} filas
               </li>
             ))}
           </ul>

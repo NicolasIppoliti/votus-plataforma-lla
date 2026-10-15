@@ -5,9 +5,8 @@ import type { CircuitOutcome, OfficialSectionCircuitOutcomes } from "@/lib/works
 import { TableRegion } from "@/components/TableRegion";
 import { Alert } from "@/components/ui/alert";
 import styles from "./comparison.module.css";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
-const decimal = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const integer = new Intl.NumberFormat("es-AR");
 interface Row { code: string; reason: string | null; a: number | null; b: number | null; change: number | null; voteChange: number | null }
 function reason(a: CircuitOutcome | undefined, b: CircuitOutcome | undefined): string | null {
   if (!a || !b) return "Sin observación en ambos lados";
@@ -38,7 +37,7 @@ export function ComparisonChildren({ outcomes, party }: { outcomes: [OfficialSec
   const visible = [...rows].sort((a, b) => (a.change === null ? 1 : 0) - (b.change === null ? 1 : 0) ||
     (a.change !== null && b.change !== null ? (order === "descending" ? b.change - a.change : a.change - b.change) : 0) || a.code.localeCompare(b.code, "es"))
     .filter(row => row.code.toLocaleLowerCase("es").includes(search.trim().toLocaleLowerCase("es")));
-  const format = (value: number | null, suffix: string, signed = false) => value === null ? "No disponible" : `${signed && value > 0 ? "+" : ""}${decimal.format(value)} ${suffix}`;
+  const format = (value: number | null, suffix: string, signed = false) => value === null ? "No disponible" : `${signed && value > 0 ? "+" : ""}${formatFixed2(value)} ${suffix}`;
   return <section className={styles.children} aria-labelledby="compare-child-heading">
     <header><div><h2 id="compare-child-heading">Cambio por territorio</h2><p>Circuitos · agrupación seleccionada · B − A</p></div>
       <div className={styles.childControls}><div><label htmlFor="compare-child-search">Filtrar territorios de la tabla</label><input id="compare-child-search" type="search" placeholder="Buscar por código" disabled={!available} value={search} onChange={event => setSearch(event.target.value)} /></div>
@@ -50,7 +49,7 @@ export function ComparisonChildren({ outcomes, party }: { outcomes: [OfficialSec
         {[left, right].map((side, index) => side.status === "ok" && <div key={index}><p>Lado {index === 0 ? "A" : "B"}: mesas sin pertenencia {side.unassigned.catalogue_mesas_without_membership}; pertenencias en cuarentena {side.unassigned.membership_quarantined_mesas}; cuarentenas de completitud {side.unassigned.completeness_quarantines}; estados inesperados {side.unassigned.unexpected_status_mesas}.</p>
           <ul>{Object.entries(side.unassigned.membership_quarantine_reasons).map(([label, count]) => <li key={`membership-${label}`}>{label}: {count}</li>)}{Object.entries(side.unassigned.completeness_quarantine_reasons).map(([label, count]) => <li key={`completeness-${label}`}>{label}: {count}</li>)}</ul></div>)}
       </div>
-      <TableRegion label="Tabla de cambio por circuito"><table className="data-table"><caption>Cambio por circuito sobre votos positivos incluidos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Estado del par</th><th scope="col">Participación A</th><th scope="col">Participación B</th><th scope="col">Cambio B − A</th><th scope="col">Votos B − A</th></tr></thead><tbody>{visible.map(row => <tr key={row.code}><th scope="row">Circuito {row.code}</th><td>{row.reason ?? "Observaciones completas; límites históricos sin verificar"}</td><td>{format(row.a, "%")}</td><td>{format(row.b, "%")}</td><td>{format(row.change, "pp", true)}</td><td>{row.voteChange === null ? "No disponible" : `${row.voteChange > 0 ? "+" : ""}${integer.format(row.voteChange)} votos`}</td></tr>)}</tbody></table></TableRegion>
+      <TableRegion label="Tabla de cambio por circuito"><table className="data-table"><caption>Cambio por circuito sobre votos positivos incluidos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Estado del par</th><th scope="col">Participación A</th><th scope="col">Participación B</th><th scope="col">Cambio B − A</th><th scope="col">Votos B − A</th></tr></thead><tbody>{visible.map(row => <tr key={row.code}><th scope="row">Circuito {row.code}</th><td>{row.reason ?? "Observaciones completas; límites históricos sin verificar"}</td><td>{format(row.a, "%")}</td><td>{format(row.b, "%")}</td><td>{format(row.change, "pp", true)}</td><td>{row.voteChange === null ? "No disponible" : `${row.voteChange > 0 ? "+" : ""}${formatCount(row.voteChange)} votos`}</td></tr>)}</tbody></table></TableRegion>
       {!visible.length && <p>No hay coincidencias.</p>}
     </>}
   </section>;

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
+import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
 import styles from "./drilldown.module.css";
 import { TerritorialBreakdown } from "./TerritorialBreakdown";
@@ -8,7 +9,7 @@ import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
 import { TerritorialNavigator } from "./TerritorialNavigator";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
@@ -41,6 +42,7 @@ import {
   type OfficialDrilldownEvidence,
 } from "@/lib/workspace/official-drilldown-evidence";
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
 interface DrilldownPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -102,7 +104,7 @@ function ExplorerForm({ facets, selected, children, header }: ExplorerFormProps)
     { name: "circuitoCode", id: "explorer-circuito", label: "Circuito", placeholder: "Cualquier circuito", options: namedOptions(facets.circuitos) },
     { name: "establecimientoCode", id: "explorer-establecimiento", label: "Establecimiento", placeholder: "Cualquier establecimiento", options: namedOptions(facets.establecimientos) },
     { name: "mesaCode", id: "explorer-mesa", label: "Mesa", placeholder: "Cualquier mesa", options: facets.mesas.map((option) => ({ value: String(option.code), label: String(option.code) })) },
-    { name: "level", id: "explorer-level", label: "Nivel del informe", placeholder: "Elegir un nivel", options: facets.availableLevels.map((level) => ({ value: level, label: granularityLabel(level) })) },
+    { name: "level", id: "explorer-level", label: ELECTORAL_CONTEXT_LABELS.level, placeholder: "Elegir un nivel", options: facets.availableLevels.map((level) => ({ value: level, label: granularityLabel(level) })) },
   ];
   return <DrilldownSelectionForm selected={values} fields={fields} header={header} notes={facetExclusionNotes(facets.exclusions ?? [])}>
     {children}
@@ -110,7 +112,7 @@ function ExplorerForm({ facets, selected, children, header }: ExplorerFormProps)
 }
 
 function formatShare(share: string | null): string {
-  return share === null ? "porcentaje no disponible" : `${(Number(share) * 100).toFixed(2)}%`;
+  return share === null ? "porcentaje no disponible" : `${formatFixed2(Number(share) * 100)}%`;
 }
 
 function formatCounts(counts: Readonly<Record<string, number>>): string {
@@ -133,8 +135,8 @@ function facetExclusionNotes(
     return (
       <p role="note" key={exclusion.reason}>
         {overflow
-          ? `La profundidad ${label} excede el límite seguro: ${exclusion.rows} filas.`
-          : `Se excluyeron ${exclusion.rows} ${exclusion.rows === 1 ? "fila" : "filas"} de las opciones: ${label}.`}
+          ? `La profundidad ${label} excede el límite seguro: ${formatCount(exclusion.rows)} filas.`
+          : `Se excluyeron ${formatCount(exclusion.rows)} ${exclusion.rows === 1 ? "fila" : "filas"} de las opciones: ${label}.`}
       </p>
     );
   });
@@ -146,7 +148,7 @@ function sourceExclusionNotes(
 ): ReactNode {
   return exclusions.map((exclusion) => (
     <p role="note" key={`${aggregate}-${exclusion.kind}`}>
-      Se excluyeron {exclusion.rows} {exclusion.rows === 1 ? "fila" : "filas"} de fuente {displaySourceKind(exclusion.kind)} / {exclusion.votes} {exclusion.votes === 1 ? "voto" : "votos"} del agregado {aggregate}.
+      Se excluyeron {formatCount(exclusion.rows)} {exclusion.rows === 1 ? "fila" : "filas"} de fuente {displaySourceKind(exclusion.kind)} / {formatCount(exclusion.votes)} {exclusion.votes === 1 ? "voto" : "votos"} del agregado {aggregate}.
     </p>
   ));
 }
@@ -160,7 +162,7 @@ function schoolExclusionNotes(
       {sourceExclusionNotes(sourceExclusions, "establecimiento")}
       {exclusions.map((exclusion) => (
         <p role="note" key={exclusion.reason}>
-          Se excluyeron {exclusion.rows} fila(s) / {exclusion.votes} voto(s): {exclusion.reason}.
+          Se excluyeron {formatCount(exclusion.rows)} fila(s) / {formatCount(exclusion.votes)} voto(s): {exclusion.reason}.
         </p>
       ))}
     </>
@@ -176,12 +178,12 @@ function RefusalEvidence({ evidence }: { evidence: EvidenceRefusalWithDetails["e
       {part.counts ? <p role="note">Conteos: {formatCounts(part.counts)}.</p> : null}
       {part.exclusions?.map((entry) => (
         <p role="note" key={`${part.part}-exclusion-${entry.reason}`}>
-          Exclusión {entry.reason}: {entry.rows} fila(s){entry.votes === undefined ? "." : ` / ${entry.votes} voto(s).`}
+          Exclusión {entry.reason}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}
         </p>
       ))}
       {part.sourceExclusions?.map((entry) => (
         <p role="note" key={`${part.part}-source-${entry.kind}`}>
-          Fuente excluida {displaySourceKind(entry.kind ?? "unknown")}: {entry.rows} fila(s){entry.votes === undefined ? "." : ` / ${entry.votes} voto(s).`}
+          Fuente excluida {displaySourceKind(entry.kind ?? "unknown")}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}
         </p>
       ))}
     </section>
@@ -219,10 +221,13 @@ function SectionCompleteness({ completeness, selection }: { completeness: Eviden
 function ResultEvidence({ evidence, selection, facets, selected }: { evidence: EvidenceOk; selection: OfficialSelection; facets: ExplorationFacets; selected: ExplorerFormProps["selected"] }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
   if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <Alert variant="denied">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</Alert>;
+  const circuitLeadersMap = selection.requestedLevel === "seccion" && selection.circuitoCode === null && selection.establecimientoCode === null && selection.mesaCode === null
+    && evidence.circuitOutcomes?.status === "ok" && evidence.circuitOutcomes.circuit_membership === "known" && selection.distritoCode === "02" && selection.seccionCode === "027";
   return (
     <CircuitSelectionProvider>
       <section className={styles.workbench} aria-label="Mesa de trabajo territorial">
         <TerritorialMapStage key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()}
+          heading={circuitLeadersMap ? MAP_HEADING.CIRCUIT_LEADERS : MAP_HEADING.REFERENCE}
           title={territorialItems(facets, selected).at(-1)?.name ?? "Territorio seleccionado"}
           subtitle={selection.requestedLevel === "seccion" && selection.distritoCode === "02" && selection.seccionCode === "027" ? "Contorno de referencia · circuitos y margen sobre votos positivos" : selection.distritoCode === "02" && selection.seccionCode === "027" ? "Contorno de referencia: Coronel Rosales · sin geometría propia" : selection.distritoCode === "02" ? "Contorno de referencia: Buenos Aires · sin geometría propia" : "Referencia geográfica no disponible"}
           referenceRosales={selection.requestedLevel !== "seccion" && selection.distritoCode === "02" && selection.seccionCode === "027"}
@@ -263,16 +268,16 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
             <div><dt>Circuito</dt><dd>{selection.circuitoCode ?? "Cualquier circuito"}</dd></div>
             <div><dt>Establecimiento</dt><dd>{selection.establecimientoCode ?? "Cualquier establecimiento"}</dd></div>
             <div><dt>Mesa</dt><dd>{selection.mesaCode ?? "Cualquier mesa"}</dd></div>
-            <div><dt>Nivel del informe</dt><dd>{granularityLabel(selection.requestedLevel)}</dd></div>
+            <div><dt>{ELECTORAL_CONTEXT_LABELS.level}</dt><dd>{granularityLabel(selection.requestedLevel)}</dd></div>
           </dl>
         </section>
       <section className={styles.results} aria-labelledby="official-results-heading">
         <h2 id="official-results-heading">Desglose oficial autorizado</h2>
       <p role="status">
-        {result.totalVotes} votos a nivel {result.level}, obtenidos de filas de fuente {result.sourceGranularity}
+        {formatCount(result.totalVotes)} votos a nivel {result.level}, obtenidos de filas de fuente {result.sourceGranularity}
         {result.mesaCount === null
           ? ". La cantidad de mesas no está disponible con la granularidad publicada por la fuente."
-          : ` en ${result.mesaCount} mesas.`}
+          : ` en ${formatCount(result.mesaCount)} mesas.`}
       </p>
       <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
       {sourceExclusionNotes(result.sourceExclusions, "oficial")}
@@ -287,7 +292,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
                 <TableHead className="evidence-text" scope="row">
                   {party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}
                 </TableHead>
-                <TableCell>{party.votes} votos</TableCell>
+                <TableCell>{formatCount(party.votes)} votos</TableCell>
                 <TableCell>{formatShare(party.voteShare)}</TableCell>
               </TableRow>
             ))}
@@ -315,9 +320,9 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
                     {schools.schools.flatMap((school) => school.parties.map((party, index) => (
                       <TableRow key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
                         <TableCell className="evidence-text">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</TableCell>
-                        <TableCell>{school.mesaCount} mesas</TableCell>
+                        <TableCell>{formatCount(school.mesaCount)} mesas</TableCell>
                         <TableCell className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</TableCell>
-                        <TableCell>{party.votes} votos</TableCell>
+                        <TableCell>{formatCount(party.votes)} votos</TableCell>
                         <TableCell>{formatShare(party.voteShare)}</TableCell>
                       </TableRow>
                     )))}
@@ -335,7 +340,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <h3 id="reference-heading">Referencia electoral autorizada</h3>
         {reference.sourceExclusions.map((entry) => (
           <p role="note" key={`reference-${entry.kind}`}>
-            Se excluyeron {entry.rows} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {entry.reason}.
+            Se excluyeron {formatCount(entry.rows)} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {entry.reason}.
           </p>
         ))}
         <TableRegion label="Referencia electoral autorizada">
@@ -424,12 +429,12 @@ function ObservedLeader({ result, completeness }: { result: EvidenceOk["result"]
   return <div aria-label="Liderazgo observado">
     <div className={styles.leader}>
       <h3>Líder observado · todas las agrupaciones</h3><strong>{label}</strong>
-      <p>Participación {share === null ? "no disponible" : `${share.toFixed(2)} %`} · margen {margin === null ? "no disponible" : `${margin.toFixed(2)} pp`}.</p>
+      <p>{share === null ? "Porcentaje no disponible" : `${formatFixed2(share)} % de los votos positivos`} · margen {margin === null ? "no disponible" : `${formatFixed2(margin)} pp`}.</p>
       <small>Sobre votos positivos; no representa participación del padrón.</small>
       {completeness}
       <p>Liderazgo observado, no certificación de ganador.</p>
     </div>
-    <div className={styles.total}><span>Votos positivos</span><strong>{positive.toLocaleString("es-AR")}</strong><p>{positive} votos positivos · {result.totalVotes} votos totales informados.</p></div>
+    <div className={styles.total}><span>Votos positivos</span><strong>{formatCount(positive)}</strong><p>{formatCount(positive)} votos positivos · {formatCount(result.totalVotes)} votos totales informados.</p></div>
   </div>;
 }
 
@@ -455,7 +460,7 @@ function PageShell({ facets, selected, children, workbench = true, showTrail = t
       <div className={`shell-container ${styles.layout}`}>
         <ExplorerForm facets={facets} selected={selected} header={<ExplorerHeader facets={showTrail ? facets : undefined} selected={selected} />}>
         {workbench && <section className={styles.workbench} aria-label="Mesa de trabajo territorial">
-          <TerritorialMapStage title={territorialItems(facets, selected).at(-1)?.name ?? "Argentina"} subtitle="Contorno de referencia · sin resultados electorales" referenceRosales={selected.distritoCode === "02" && selected.seccionCode === "027"}>
+          <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title={territorialItems(facets, selected).at(-1)?.name ?? "Argentina"} subtitle="Contorno de referencia · sin resultados electorales" referenceRosales={selected.distritoCode === "02" && selected.seccionCode === "027"}>
             {selected.distritoCode === "02" ? <ProvinceReferenceMap /> : selected.distritoCode ? <p>Referencia geográfica no disponible para este distrito.</p> : <NationalReferenceMap />}
           </TerritorialMapStage>
           <section className={styles.inspector} aria-label="Detalle territorial"><div className={styles.detailTop}><span>Detalle territorial</span><span className={styles.levelBadge}>{levelLabel(selected.level)}</span></div><h2>{territorialItems(facets, selected).at(-1)?.name}</h2><Navigator facets={facets} selected={selected} /><p>Sin cifras hasta contar con una selección exacta autorizada.</p></section>

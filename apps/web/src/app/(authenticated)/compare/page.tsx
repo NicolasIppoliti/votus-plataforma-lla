@@ -18,6 +18,7 @@ import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
 import type { ExplorationFacets, FacetOption } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 import {
   OFFICIAL_COMPARISON_EVIDENCE_STATUS,
   loadAuthorizedOfficialComparisonEvidence,
@@ -58,18 +59,17 @@ const LEGACY_QUERY_KEYS = new Set([
   "right_category_id",
 ]);
 
-const numberFormatter = new Intl.NumberFormat("es-AR", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+function formatOptionalCount(value: number | undefined): string {
+  return value === undefined ? "Observación no disponible" : formatCount(value);
+}
 
 function formatPercentage(value: number): string {
-  return `${numberFormatter.format(value)} %`;
+  return `${formatFixed2(value)} %`;
 }
 
 function formatSwing(value: number): string {
   const normalized = Math.abs(value) < 0.005 ? 0 : value;
-  return `${normalized > 0 ? "+" : ""}${numberFormatter.format(normalized)} puntos porcentuales`;
+  return `${normalized > 0 ? "+" : ""}${formatFixed2(normalized)} puntos porcentuales`;
 }
 
 function refusalPage(message: ReactNode): ReactNode {
@@ -246,7 +246,7 @@ function CompareSelector({
 
 function unmappedPartiesRefusal(sides: OfficialComparisonUnmappedSide[]): string {
   const labels = { left: "lado izquierdo", right: "lado derecho" } as const;
-  const details = sides.map(({ side, partyCount, totalVotes }) => `${labels[side]}: ${partyCount} ${partyCount === 1 ? "partido" : "partidos"} sin mapear, ${totalVotes} votos`);
+  const details = sides.map(({ side, partyCount, totalVotes }) => `${labels[side]}: ${formatCount(partyCount)} ${partyCount === 1 ? "partido" : "partidos"} sin mapear, ${formatCount(totalVotes)} votos`);
   return `La comparación se rechazó porque contiene identidades partidarias sin mapear. ${details.join(". ")}. No se muestran cifras parciales.`;
 }
 
@@ -308,10 +308,10 @@ function sourceNotes(side: AuthorizedOfficialComparisonSideEvidence, label: stri
     <section className="official-compare__side-evidence" aria-labelledby={`exclusions-${label}`}>
       <h3 id={`exclusions-${label}`}>Cobertura y exclusiones — {sideLabel}</h3>
       {side.result.sourceAudit.map((entry) => (
-        <p role="note" key={`${label}-audit-${entry.kind}`}>{label}: {entry.rows} fila(s) oficiales incluidas.</p>
+        <p role="note" key={`${label}-audit-${entry.kind}`}>{label}: {formatCount(entry.rows)} fila(s) oficiales incluidas.</p>
       ))}
       {side.result.sourceExclusions.map((entry) => (
-        <p role="note" key={`${label}-excluded-${entry.kind}`}>{label}: {entry.rows} fila(s) de fuente {entry.kind} excluidas de todas las cifras.</p>
+        <p role="note" key={`${label}-excluded-${entry.kind}`}>{label}: {formatCount(entry.rows)} fila(s) de fuente {entry.kind} excluidas de todas las cifras.</p>
       ))}
     </section>
   );
@@ -605,10 +605,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
                 return (
                   <tr key={partySwing.party}>
                     <th scope="row">{leftName(partySwing.party)}</th>
-                    <td className="table-cell--number">{swing.shares2023.find(share => share.party === partySwing.party)?.votes ?? "Observación no disponible"}</td>
+                    <td className="table-cell--number">{formatOptionalCount(swing.shares2023.find(share => share.party === partySwing.party)?.votes)}</td>
                     <td className="table-cell--number">{share2023 === undefined ? "Observación no disponible" : formatPercentage(share2023)}</td>
                     <td>{rightName(partySwing.party)}</td>
-                    <td className="table-cell--number">{swing.shares2025.find(share => share.party === partySwing.party)?.votes ?? "Observación no disponible"}</td>
+                    <td className="table-cell--number">{formatOptionalCount(swing.shares2025.find(share => share.party === partySwing.party)?.votes)}</td>
                     <td className="table-cell--number">{share2025 === undefined ? "Observación no disponible" : formatPercentage(share2025)}</td>
                     <td className="table-cell--number">{share2023 === undefined || share2025 === undefined ? "Observación no disponible" : formatSwing(partySwing.swingPercentPoints)}</td>
                     <td className="table-cell--number">{share2023 === undefined || share2025 === undefined ? "Observación no disponible" : `${swing.shares2025.find(share => share.party === partySwing.party)!.votes - swing.shares2023.find(share => share.party === partySwing.party)!.votes} votos`}</td>

@@ -1,7 +1,7 @@
 import { Alert } from "@/components/ui/alert";
 import styles from "./fiscalizacion.module.css";
+import { formatCount } from "@/lib/format/number";
 
-const count = new Intl.NumberFormat("es-AR");
 
 export function CoverageChart({ observedUnits, denominatorUnits }: {
   observedUnits: number;
@@ -13,11 +13,11 @@ export function CoverageChart({ observedUnits, denominatorUnits }: {
     {denominatorUnits === 0 ? (
       <Alert variant="empty">El denominador oficial es 0; no hay una escala proporcional que representar.</Alert>
     ) : <>
-      <p className={styles.scaleDescription}>Escala: de 0 a {count.format(denominatorUnits)} unidades</p>
+      <p className={styles.scaleDescription}>Escala: de 0 a {formatCount(denominatorUnits)} unidades</p>
       <div className={styles.plot}>
-        <div className={styles.axis} aria-hidden="true"><span>0</span><span>{count.format(denominatorUnits)}</span></div>
+        <div className={styles.axis} aria-hidden="true"><span>0</span><span>{formatCount(denominatorUnits)}</span></div>
         <svg className={styles.bar} viewBox="0 0 100 12" preserveAspectRatio="none"
-          role="img" aria-label={`${count.format(observedUnits)} de ${count.format(denominatorUnits)} unidades observadas`}>
+          role="img" aria-label={`${formatCount(observedUnits)} de ${formatCount(denominatorUnits)} unidades observadas`}>
           <line x1="100" x2="100" y1="0" y2="12" className={styles.gridLine} vectorEffect="non-scaling-stroke" />
           <rect x="0" y="3" width={observedUnits / denominatorUnits * 100} height="6" className={styles.mark} />
           <line x1="0" x2="0" y1="0" y2="12" className={styles.baseline} vectorEffect="non-scaling-stroke" />

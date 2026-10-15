@@ -3,14 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import styles from "./SectionReferenceMap.module.css";
-import { REFERENCE_FILL, REFERENCE_LINE } from "./reference-colors";
-
-// Fixed 0–100% domain; legend and layer use these same stops.
-export const SHARE_COLORS = { low: [21, 50, 66], high: [101, 229, 242] } as const;
-export function shareFill(percent: number): [number, number, number, number] {
-  const fraction = Math.max(0, Math.min(100, percent)) / 100;
-  return [0, 1, 2].map((index) => Math.round(SHARE_COLORS.low[index]! + (SHARE_COLORS.high[index]! - SHARE_COLORS.low[index]!) * fraction)).concat(220) as [number, number, number, number];
-}
+import { REFERENCE_FILL, REFERENCE_LINE, REFERENCE_COLOR, Legend, shareFill } from "./reference-colors";
 
 interface Props {
   coordinates: number[][][][];
@@ -143,8 +136,9 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
   const fill = fillColor ?? (sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent));
   return <div className={styles.root}>
     {!active && staticLabel && <svg className={styles.staticMap} viewBox="0 0 320 320" role="img" aria-label={`Mapa estático de ${name}; ${label}; ${staticLabel}`}>
-      {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke="rgb(101,229,242)" strokeWidth="1" />)}
+      {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth="1" />)}
     </svg>}
+    {fillColor === undefined && sharePercent === undefined && <Legend label="Referencia geográfica" entries={[{ label: "Contorno de referencia; sin resultados electorales", encoding: "outline" }]} />}
     <button type="button" onClick={() => { setStatus("Cargando mapa de la sección…"); setActive(true); }} disabled={active} aria-label={`Activar mapa interactivo de ${label}`}>Mostrar mapa interactivo</button>
     <button type="button" onClick={focusResults}>Seleccionar sección y consultar resultados</button>
     <Alert variant="caveat">{status}</Alert>
