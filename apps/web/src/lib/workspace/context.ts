@@ -1,4 +1,6 @@
 import "server-only";
+import type { WorkspaceRpcName } from "./profile-span";
+import { profileServerSpan as profileSpan } from "./profile-server";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExplorationFacetSelection } from "@/lib/results/exploration";
@@ -80,7 +82,7 @@ function hasStrictSessionClaims(value: unknown): boolean {
 }
 
 async function verifiedWorkspaceApi(client: SupabaseClient) {
-  const verified = await client.auth.getClaims();
+  const verified = await profileSpan("auth.getClaims", () => client.auth.getClaims());
   if (verified.error || !hasStrictSessionClaims(verified.data?.claims)) {
     throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.DENIED);
   }
@@ -89,12 +91,14 @@ async function verifiedWorkspaceApi(client: SupabaseClient) {
 
 async function rpcData(
   api: ReturnType<SupabaseClient["schema"]>,
-  name: string,
+  name: WorkspaceRpcName,
   parameters?: Record<string, boolean | number | string | null>,
 ) {
   let response;
   try {
-    response = parameters ? await api.rpc(name, parameters) : await api.rpc(name);
+    response = await profileSpan(`workspace.rpc.${name}`, () => parameters
+      ? api.rpc(name, parameters)
+      : api.rpc(name));
   } catch {
     throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.UNAVAILABLE);
   }

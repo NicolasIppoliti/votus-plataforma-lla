@@ -11,6 +11,7 @@ import { EvidenceMap } from "./EvidenceMap";
 import { EvidenceUnits } from "./EvidenceUnits";
 import styles from "./evidence.module.css";
 import { formatCount } from "@/lib/format/number";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 
 type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type Params = Record<string, string | string[] | undefined>;
@@ -164,7 +165,7 @@ export default async function EvidencePage({ searchParams }: { searchParams: Pro
     else content = <Result evidence={evidence} title={facets.secciones.find(item => item.code === values.seccionCode)?.name ?? fields[3]!.options.find(item => item.value === values.seccionCode)!.label} distrito={facets.distritos.find(item => item.code === values.distritoCode)?.name ?? fields[2]!.options.find(item => item.value === values.distritoCode)!.label} rosales={values.distritoCode === "02" && values.seccionCode === "027"} />;
   }
   return <Shell><EvidenceContext key={new URLSearchParams(values).toString()} fields={fields}>
-    {showFacetExclusions && (facets.exclusions ?? []).map(entry => <p className={styles.notice} role="note" key={entry.reason}>Opciones excluidas: {entry.reason}; {formatCount(entry.rows)} fila(s).</p>)}
+    {showFacetExclusions && (facets.exclusions ?? []).map(entry => <p className={styles.notice} role="note" key={entry.reason}>Opciones excluidas: {facetExclusionLabel(entry.reason)}; {formatCount(entry.rows)} fila(s).</p>)}
     {content}
   </EvidenceContext></Shell>;
 }
