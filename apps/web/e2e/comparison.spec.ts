@@ -78,7 +78,7 @@ test.describe("authorized official comparison", () => {
         await page.getByLabel("Contraseña").fill("synthetic-invalid-password");
         await page.getByRole("button", { name: "Iniciar sesión" }).click();
         try {
-          await expect(page.getByRole("alert")).toHaveText("Las credenciales no son válidas.");
+          await expect(page.locator("#login-error")).toHaveText("Las credenciales no son válidas.");
         } catch (error) {
           await test.info().attach("sign-in-failure", {
             path: await writeSignInFailureFacts(page), contentType: "application/json",
