@@ -14,6 +14,32 @@ async function expectNoSevereAccessibilityIssues(page: Page) {
     .map(issue => ({ id: issue.id, impact: issue.impact, affectedNodes: issue.nodes.length }))).toEqual([]);
 }
 
+test("electoral context stays labelled and readable at 320px with explicit source opt-in", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/municipal");
+  const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+  await expect(bar).toBeVisible();
+  await expect(bar).toHaveCSS("position", "static");
+  await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "static");
+  for (const label of ["Elección", "Categoría", "Distrito", "Sección", "Fuente"]) {
+    await expect(bar.getByRole("combobox", { name: `Contexto electoral: ${label}`, exact: true })).toHaveCount(1);
+  }
+  await expect(page).toHaveURL(/\/municipal$/);
+  const source = bar.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true });
+  await expect(source).toHaveValue("official");
+  await source.selectOption("fiscalizacion");
+  await expect(page).toHaveURL(/sourceKind=fiscalizacion/);
+  await expect(bar).toHaveAttribute("data-source", "fiscalizacion");
+  await expect(bar.getByText("Fiscalización: fuente no oficial.", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(bar).toHaveCSS("position", "sticky");
+  await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "sticky");
+  await page.setViewportSize({ width: 1440, height: 500 });
+  await expect(bar).toHaveCSS("position", "static");
+  await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "static");
+});
+
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
