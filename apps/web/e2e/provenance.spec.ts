@@ -891,6 +891,7 @@ test("sole organization login reaches drilldown data without selecting a workspa
     await page.getByText("Mostrar resultados exactos", { exact: true }).click();
     const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
     await expect(region).toBeVisible();
-    await expect(region).toContainText("13206 votos");
+    await expect(region.getByRole("row").filter({ hasText: "LIBERTAD POR SIEMPRE" }))
+      .toContainText("13.206 votos");
   }, true), "paso");
 });
