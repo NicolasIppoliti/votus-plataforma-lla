@@ -11,7 +11,7 @@ const section = { name: "seccionCode" as const, id: "section", label: "Sección"
 it("reaches the sección definition beside the unchanged selector labels in both production forms", () => {
   const forms = [
     <DrilldownSelectionForm key="explore" selected={selected} fields={[section]} notes={null}>{null}</DrilldownSelectionForm>,
-    <FiscalizacionSelectionForm key="coverage" selected={selected} fields={[section]}>{null}</FiscalizacionSelectionForm>,
+    <FiscalizacionSelectionForm key="coverage" selected={selected} sourceKind="fiscalizacion" fields={[section]}>{null}</FiscalizacionSelectionForm>,
   ];
   for (const form of forms) {
     const html = renderToStaticMarkup(form);
@@ -21,6 +21,12 @@ it("reaches the sección definition beside the unchanged selector labels in both
     expect(html).toContain('aria-describedby=');
     expect(html).toContain('En Buenos Aires corresponde a un partido.');
   }
+});
+
+it.each(["official", "fiscalizacion"] as const)("keeps the %s source context alongside glossary help", sourceKind => {
+  const html = renderToStaticMarkup(<FiscalizacionSelectionForm selected={selected} sourceKind={sourceKind} fields={[section]}>{null}</FiscalizacionSelectionForm>);
+  expect(html).toContain(`name="sourceKind" value="${sourceKind}"`);
+  expect(html).toContain('aria-label="Qué significa sección"');
 });
 
 it.each([

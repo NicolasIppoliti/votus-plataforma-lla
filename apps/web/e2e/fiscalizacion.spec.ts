@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { formatCount } from "../src/lib/format/number";
+import { serializeElectoralContext } from "../src/lib/context/url";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./review-test-fixture";
 import { zoomTest } from "./review-zoom-test-fixture";
@@ -73,6 +74,8 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(page.getByRole("main")).not.toContainText("No tiene autorización");
       await expect(page.getByRole("button", { name: "Mostrar cobertura" })).toHaveCount(0);
       await expect(page.getByText("La cobertura y los resultados se actualizan al cambiar la selección.")).toBeVisible();
+      // Start an intentionally empty journey; a cold route may have an authorized default.
+      await page.goto(new URL("/fiscalizacion?electionId=", baseURL).toString());
       for (const label of ["Categoría", "Distrito", "Sección"]) {
         const descendant = page.getByLabel(label, { exact: true });
         await expect(descendant).toBeDisabled();
@@ -89,7 +92,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
         await control.focus(); await control.selectOption(value);
         selection.set(name, value);
         await expect(child).toHaveValue("");
-        await expect(page).toHaveURL(new URL(`/fiscalizacion?${selection}`, baseURL).toString());
+        await expect(page).toHaveURL(new URL(`/fiscalizacion?${serializeElectoralContext({ ...Object.fromEntries(selection), sourceKind: "official" })}`, baseURL).toString());
         await expect(child).toBeEnabled(); await expect(form).not.toHaveAttribute("aria-busy", "true");
         await expect(control).toBeFocused();
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
@@ -108,10 +111,16 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(sectionHelp).toBeFocused();
       await page.getByLabel("Sección", { exact: true }).focus();
       await page.getByLabel("Sección", { exact: true }).selectOption(COVERAGE_SCOPE.seccionCode);
-      const expectedUrl = new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL).toString();
+      const expectedUrl = new URL(`/fiscalizacion?${serializeElectoralContext({ ...COVERAGE_SCOPE, sourceKind: "official" })}`, baseURL).toString();
       await expect(page).toHaveURL(expectedUrl); await expectNoBlankSearchParams(page);
       await expect(form).not.toHaveAttribute("aria-busy", "true");
       await expect(page.getByLabel("Sección", { exact: true })).toBeFocused();
+
+      // A complete context still cannot opt in implicitly.
+      expect(matched).toEqual([]);
+      await expectSuppressed(page);
+      await page.getByRole("link", { name: "Activar fiscalización (no oficial)", exact: true }).click();
+      await expect(page).toHaveURL(fiscalUrl);
 
       const primaryNavigation = page.getByRole("navigation", { name: "principal" });
       await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
@@ -194,9 +203,8 @@ test.describe("the fiscalizacion route explores coverage", () => {
   });
 });
 
-const fiscalUrl = new URL(`/fiscalizacion?${new URLSearchParams({
-  electionId: COVERAGE_SCOPE.electionId, categoryId: COVERAGE_SCOPE.categoryId,
-  distritoCode: COVERAGE_SCOPE.distritoCode, seccionCode: COVERAGE_SCOPE.seccionCode,
+const fiscalUrl = new URL(`/fiscalizacion?${serializeElectoralContext({
+  ...COVERAGE_SCOPE, sourceKind: "fiscalizacion",
 })}`, baseURL).toString();
 const pair = fiscalWirePair(COVERAGE_SCOPE);
 const figureSentinels = /7 unidades observadas|denominador 108|Sentinel school|Sentinel Party|876\.?543|456\.?789|sentinel-unmapped|missing_identity|fiscal\/sentinel|SHA-256/;
@@ -384,7 +392,7 @@ for (const action of ["revert", "independent edit"] as const) {
           await expect(section).toHaveValue(COVERAGE_SCOPE.seccionCode);
           await expectReady(page);
         } else {
-          await expect(page).toHaveURL(new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}`, baseURL).toString());
+          await expect(page).toHaveURL(new URL(`/fiscalizacion?${serializeElectoralContext({ electionId: COVERAGE_SCOPE.electionId, sourceKind: "fiscalizacion" })}`, baseURL).toString());
           await expect(control).toHaveValue("");
           await expect(page.getByLabel("Distrito", { exact: true })).toHaveValue("");
           await expect(section).toHaveValue("");
