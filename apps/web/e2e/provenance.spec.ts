@@ -90,7 +90,7 @@ test("official section completeness is disclosed through the real RPC", async ({
   }));
 });
 
-test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }) => {
+test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }, testInfo) => {
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
     await page.addInitScript(() => {
       const original = HTMLCanvasElement.prototype.getContext;
@@ -104,9 +104,20 @@ test("national reference links and no-WebGL polar view preserve exact selection"
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
     await expect(national).toContainText("WebGL no disponible");
-    await expect(national.getByRole("link", { name: "Ir a Buenos Aires" })).toHaveCount(1);
-    await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    // Failure-only facts (link text/href only): the release gate redacts Playwright output.
+    await writeFile(testInfo.outputPath("e2e-facts-national-links.json"), JSON.stringify(await national.locator("a, [role=link]").evaluateAll((elements) =>
+      elements.map((element) => ({ tag: element.tagName, text: element.textContent?.trim().slice(0, 80), href: element.getAttribute("href"),
+        hidden: element.closest("[aria-hidden=true], [hidden], [inert]") !== null, display: getComputedStyle(element).display,
+        visibility: getComputedStyle(element).visibility })))));
+    await expect(national.getByRole("link")).toHaveCount(1);
+    await expect(national).toHaveAttribute("data-map-kind", "locator");
+    expect((await national.boundingBox())!.width).toBeLessThanOrEqual(320);
+    const provenance = national.locator("details");
+    await expect(provenance.locator("code")).toBeHidden();
+    await provenance.locator("summary").click();
+    await expect(provenance.locator("code")).toContainText(/^[a-f0-9]{64}$/);
+    await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+    await expect(page).toHaveURL(/#explorer-election$/);
     await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
     await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
     await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
@@ -241,10 +252,10 @@ test("national reference renders both views on desktop and mobile without changi
     expect(rendererErrors, "browser renderer errors").toEqual([]);
     const election = page.getByRole("combobox", { name: "Elección", exact: true });
     await expect(election).toHaveValue("");
-    const provinceLink = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    const provinceLink = national.getByRole("link", { name: "Ir a la selección electoral exacta" });
     await provinceLink.focus();
     await provinceLink.press("Enter");
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page).toHaveURL(/#explorer-election$/);
     await expect(election).toHaveValue("");
     await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
     await expect(election).toBeFocused();
@@ -294,7 +305,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
     expect.soft(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
       "320px document must not overflow horizontally").toBe(true);
     const targetBoxes = [];
-    for (const label of ["Ir a Buenos Aires", "Volver a Argentina", "Ir a la selección electoral exacta"]) {
+    for (const label of ["Ir a la selección electoral exacta"]) {
       const link = national.getByRole("link", { name: label });
       const box = await link.boundingBox();
       targetBoxes.push({ label, width: box?.width ?? 0, height: box?.height ?? 0 });
@@ -305,7 +316,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
       viewport: await page.evaluate(() => ({ inner: innerWidth, client: document.documentElement.clientWidth,
         scroll: document.documentElement.scrollWidth })), targets: targetBoxes,
     }));
-    const province = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    const province = national.getByRole("link", { name: "Ir a la selección electoral exacta" });
     await province.focus();
     await expect(province).toBeFocused();
     const focus = await province.evaluate((element) => {
@@ -315,7 +326,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
     });
     expect(focus.outline || focus.shadow, "focused navigation has visible outline or ring").toBe(true);
     await province.press("Enter");
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page).toHaveURL(/#explorer-election$/);
   }));
 });
 
@@ -330,8 +341,8 @@ test.describe("national reference touch", () => {
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
         .toContainText("Vista continental disponible");
-      await national.getByRole("link", { name: "Ir a Buenos Aires" }).tap();
-      await expect(page).toHaveURL(/#province-reference-heading$/);
+      await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).tap();
+      await expect(page).toHaveURL(/#explorer-election$/);
     }));
   });
 });
@@ -368,8 +379,8 @@ zoomTest.describe("national reference at native 200% zoom", () => {
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
         .toContainText("Vista continental disponible");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
-      await expect(page).toHaveURL(/#province-reference-heading$/);
+      await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+      await expect(page).toHaveURL(/#explorer-election$/);
       }));
     } catch (error) {
       try {
@@ -511,11 +522,21 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
       await expect(legacy).not.toContainText(`${formatCount(OFFICIAL_VOTES)} votos`);
 
-      await page
-        .getByRole("navigation", { name: "principal" })
-        .getByRole("link", { name: "Exploración", exact: true })
-        .click();
+      // #442 keeps shared context even when the current route refused legacy
+      // keys. Following navigation is not a reset of election/category.
+      const carried = new URLSearchParams({ electionId: SOURCE_SCOPE.electionId, categoryId: SOURCE_SCOPE.categoryId, sourceKind: "official" });
+      const explorationLink = page.getByRole("navigation", { name: "principal" })
+        .getByRole("link", { name: "Exploración", exact: true });
+      await expect(explorationLink).toHaveAttribute("href", `/drilldown?${carried}`);
+      await explorationLink.click();
+      await expect(page).toHaveURL(new URL(`/drilldown?${carried}`, baseURL).toString());
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue(SOURCE_SCOPE.electionId);
+      await expect(page.getByRole("combobox", { name: "Categoría", exact: true })).toHaveValue(SOURCE_SCOPE.categoryId);
+      // Test the empty-form hierarchy separately, without relying on a workflow
+      // link to erase context. Keep the existing disabled/focus assertions below.
+      await page.goto(new URL("/drilldown", baseURL).toString());
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
       await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
       await page.locator("details").filter({ has: page.locator("#explorer-distrito") }).locator("summary").click();
       for (const label of ["Categoría", "Distrito", "Sección"]) {
@@ -733,7 +754,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(map).toContainText("Vista de referencia · 100 %");
       await expect(page).toHaveURL(explorerUrl);
       expect(await voteTable.textContent()).toBe(exactBeforeCamera);
-      for (const [width, inspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+      // A reference-only stage is a small locator next to the inspector (#449); data maps keep the wide stage.
+      const locator = (await map.getAttribute("data-map-kind")) === "locator";
+      for (const [width, dataInspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+        const inspectorWidth = locator && dataInspectorWidth !== null ? "locator" : dataInspectorWidth;
         await page.setViewportSize({ width, height: 900 });
         await expect.poll(async () => {
           const [filterBox, workBox, mapBox, detailBox, resultBox, evidenceBox] = await Promise.all(
@@ -742,16 +766,41 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
               return { top, bottom, left, right, width };
             })),
           );
-          return {
+          const flags = {
             filtersAbove: filterBox!.bottom <= workBox!.top,
             workbenchAboveResults: workBox!.bottom <= resultBox!.top,
             evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
             inspectorGeometry: inspectorWidth === null
-              ? mapBox!.bottom <= detailBox!.top && Math.abs(mapBox!.width - detailBox!.width) <= 2
-              : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
+              ? mapBox!.bottom <= detailBox!.top && (locator ? mapBox!.width <= 320 : Math.abs(mapBox!.width - detailBox!.width) <= 2)
+              : inspectorWidth === "locator"
+                ? mapBox!.width <= 320 && mapBox!.right <= detailBox!.left && detailBox!.width > mapBox!.width
+                : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
           };
+          if (Object.values(flags).some(value => !value)) {
+            // Structural facts only: preserve the failing viewport/branch despite CI output redaction.
+            await writeFile(test.info().outputPath(`e2e-facts-drilldown-geometry-${width}.json`), JSON.stringify({
+              viewport: page.viewportSize(), locator, inspectorWidth, flags,
+              boxes: { filters: filterBox, workbench: workBox, map: mapBox, inspector: detailBox, results: resultBox, evidence: evidenceBox },
+              layout: await workbench.evaluate(element => ({
+                columns: getComputedStyle(element).gridTemplateColumns,
+                fontSize: getComputedStyle(document.documentElement).fontSize,
+                stacked: matchMedia("(max-width: 760px)").matches,
+              })),
+              mapKind: await map.getAttribute("data-map-kind"),
+            }));
+          }
+          return flags;
         }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const overflow = await page.evaluate(() => ({
+          width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+          // Failure-only facts (tag/class/role/geometry only): the release gate redacts Playwright output.
+          widest: [...document.querySelectorAll("body *")].map((element) => ({ element, right: element.getBoundingClientRect().right }))
+            .filter(({ right }) => right > innerWidth + 1).sort((a, b) => b.right - a.right).slice(0, 8)
+            .map(({ element, right }) => ({ tag: element.tagName, className: String(element.getAttribute("class") ?? "").slice(0, 80),
+              role: element.getAttribute("role"), label: element.getAttribute("aria-label"), right: Math.round(right) })),
+        }));
+        if (overflow.scrollWidth > overflow.width) await writeFile(test.info().outputPath(`e2e-facts-drilldown-overflow-${width}.json`), JSON.stringify(overflow));
+        expect(overflow.scrollWidth <= overflow.width).toBe(true);
         for (const control of await map.getByRole("group", { name: "Controles de vista", exact: true }).getByRole("button").all()) {
           const box = await control.boundingBox();
           expect(box!.height).toBeGreaterThanOrEqual(44);

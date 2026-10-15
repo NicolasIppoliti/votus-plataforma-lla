@@ -12,7 +12,8 @@ import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
+import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING } from "./map-heading";
 import { TerritorialNavigator } from "./TerritorialNavigator";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
@@ -521,6 +522,11 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
   const legacyKeys = LEGACY_QUERY_KEYS.filter((key) => Object.hasOwn(params, key));
   if (legacyKeys.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: los parámetros heredados {legacyKeys.join(", ")} ya no están permitidos.</>);
+  }
+
+  const sourceKind = stringParam(params, "sourceKind") ?? "official";
+  if (sourceKind !== "official") {
+    return refusalPage("Se rechazó la solicitud: la exploración admite solo fuentes oficiales.");
   }
 
   const rawLevel = stringParam(params, "level");

@@ -141,7 +141,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
     <Alert variant="caveat">{status}</Alert>
   </>;
   const resultsLink = <a href={`#${resultId}`} onClick={focusResults}>Ir a los resultados exactos de la sección</a>;
-  return <div className={styles.root}>
+  return <div className={styles.root} data-map-kind={fillColor === undefined && sharePercent === undefined ? "locator" : "data"}>
     {!active && staticLabel && <svg className={styles.staticMap} viewBox="0 0 320 320" role="img" aria-label={`Mapa estático de ${name}; ${label}; ${staticLabel}`}>
       {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth="1" />)}
     </svg>}

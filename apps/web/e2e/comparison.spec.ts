@@ -46,6 +46,33 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if (cleanupError) throw cleanupError; return outcome.value;
 }
 test.describe("authorized official comparison", () => {
+  for (const width of [1440, 390]) {
+    test(`selection survives Panorama → Exploración → Comparación at ${width}px (#442)`, async ({ page }) => {
+      await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async () => {
+        await page.setViewportSize({ width, height: 1000 });
+        const context = new URLSearchParams({
+          electionId: identity.electionIds[0]!, categoryId: identity.categoryId, sourceKind: "official",
+          distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+          bElectionId: identity.electionIds[1]!, bCategoryId: identity.categoryId,
+        });
+        await page.goto(new URL(`/?${context}`, baseURL).toString());
+        await page.getByRole("main").getByRole("link", { name: "Explorar resultados", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/drilldown" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && url.searchParams.get("level") === "seccion");
+        await expect(page.getByRole("main").getByRole("table").first()).toBeVisible();
+        const navigation = width === 390
+          ? page.getByRole("dialog", { name: "Navegación principal" }).getByRole("navigation", { name: "principal", exact: true })
+          : page.locator(".app-shell > aside.situation-sidebar").getByRole("navigation", { name: "principal", exact: true });
+        if (width === 390) await page.getByRole("button", { name: "Abrir navegación" }).click();
+        await navigation.getByRole("link", { name: "Comparación", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/compare" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && !url.searchParams.has("level"));
+        await expect(page.getByRole("main").getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true })).toHaveValue(identity.electionIds[0]!);
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue(identity.seccionCode);
+      }));
+    });
+  }
+
   // A changed frame alone can be inertia or a WebGL repaint, not a settled camera.
   async function settledMap(map: Locator, phase: string): Promise<{ image: Buffer; width: number; height: number }> {
     let previous: Buffer | undefined;

@@ -448,7 +448,7 @@ function ResultEvidence({
             denominador {value.reference.denominator_units}.
           </p>
           <p>Denominador oficial: {value.reference.denominator_units}.</p>
-          <TableRegion label="Resultados de fiscalización">
+          <TableRegion mobileHint label="Resultados de fiscalización">
             <Table className="data-table">
               <TableCaption>Resultados de fiscalización</TableCaption>
               <TableHeader>

@@ -293,13 +293,13 @@ export function renderMunicipalView(
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
           </dl>
         </section>
-        {section ? <section className={styles.reference} aria-label="Referencia geográfica de sección">
-          <h2>Referencia geográfica de sección</h2>
+        {section ? <section className={styles.reference} data-map-kind="locator" aria-label="Referencia geográfica de sección">
+          <h2>Referencia territorial</h2>
           {section.status === "ok" ? <>
             <p>Contorno CNE: {section.name}. Referencia geográfica únicamente; vigencia electoral no verificada para {year}.</p>
             <SectionOutline coordinates={section.geometry.coordinates} />
             <MunicipalSectionMap coordinates={section.geometry.coordinates} name={section.name} />
-            <p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p>
+            <details><summary>Archivo geográfico CNE</summary><p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p></details>
           </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
         </section> : null}
         </div>
@@ -337,7 +337,7 @@ export function renderMunicipalView(
           ) : (
             <>
               <MunicipalDistribution parties={partyTotals} />
-              <TableRegion label="Tabla de resultados oficiales exactos por partido">
+              <TableRegion mobileHint label="Tabla de resultados oficiales exactos por partido">
                 <Table className="data-table">
                   <caption>Resultados oficiales exactos por partido y votos</caption>
                   <thead>
