@@ -17,6 +17,30 @@ def _sql(name: str) -> str:
     return (MIGRATIONS / name).read_text(encoding="utf-8").lower()
 
 
+def test_non_positive_vote_kinds_migration_and_reverse() -> None:
+    sql = _sql("20261015300000_non_positive_vote_kinds.sql")
+    assert "vote_kind text not null default 'positivo'" in sql
+    assert "unique nulls not distinct" in sql
+    for kind in ("positivo", "en blanco", "nulo", "impugnado", "recurrido", "comando"):
+        assert f"'{kind}'" in sql
+    assert "list_id is null" in sql
+    assert "vote_kind = 'positivo'" in sql
+    down = _sql("down/20261015300000_non_positive_vote_kinds.down.sql")
+    assert "raise exception" in down
+    assert "drop column vote_kind" in down
+    assert "delete from public.result_row" not in down
+
+
+def test_positive_read_scope_index_remains_covering() -> None:
+    sql = _sql("20261015300000_non_positive_vote_kinds.sql")
+    assert "drop index public.result_row_official_district_scope_idx" in sql
+    assert "include (archive_entry_id, granularity, list_id, votes, vote_kind)" in sql
+    assert "where source_kind = 'official'" in sql
+    down = _sql("down/20261015300000_non_positive_vote_kinds.down.sql")
+    assert "create index result_row_official_district_scope_idx" in down
+    assert "include (archive_entry_id, granularity, list_id, votes)" in down
+
+
 def test_projection_receipt_scope_rls_grants_and_reverse() -> None:
     sql = _sql("20261015200000_projection_receipt.sql")
     assert "primary key (archive_entry_id, election_id, source_kind)" in sql
@@ -109,6 +133,17 @@ def _assert_jurisdiction_fixture_ids_are_unique(sql: str) -> None:
             active_ids.add(fixture_id)
 
     assert saw_fixture_row, "jurisdiction fixture inserts are required"
+
+
+def test_coverage_refusal_fixture_has_distinct_null_safe_observation_keys() -> None:
+    sql = (SQL_TESTS / "results_exploration.sql").read_text(encoding="utf-8")
+    # Both rows share election/jurisdiction/category/NULL list/source/kind.
+    # They represent separate observations (mesa vs coarser), not a duplicate
+    # natural key that used to evade uniqueness because list_id was NULL.
+    original = re.search(r"'([^']+)',\s*23\)", sql)
+    coarser = re.search(r"'([^']+)',\s*29\)", sql)
+    assert original is not None and coarser is not None
+    assert original[1] != coarser[1]
 
 
 def test_results_exploration_jurisdiction_fixture_ids_are_unique() -> None:
@@ -1225,7 +1260,10 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20261015300000_non_positive_vote_kinds.down.sql",
         "\\ir ../migrations/down/20261015200000_projection_receipt.down.sql",
+        "\\ir ../migrations/down/20261015100000_jurisdiction_merge_key_index.down.sql",
+        "\\ir ../migrations/down/20261015000000_bootstrap_sole_organization.down.sql",
         "\\ir ../migrations/down/20261014000000_upgrade_historical_review_contexts.down.sql",
         "\\ir ../migrations/down/20261013000000_official_section_circuit_outcomes.down.sql",
         "\\ir ../migrations/down/20261012000000_official_section_completeness.down.sql",
@@ -1328,7 +1366,10 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20261012000000_official_section_completeness.sql",
         "\\ir ../migrations/20261013000000_official_section_circuit_outcomes.sql",
         "\\ir ../migrations/20261014000000_upgrade_historical_review_contexts.sql",
+        "\\ir ../migrations/20261015000000_bootstrap_sole_organization.sql",
+        "\\ir ../migrations/20261015100000_jurisdiction_merge_key_index.sql",
         "\\ir ../migrations/20261015200000_projection_receipt.sql",
+        "\\ir ../migrations/20261015300000_non_positive_vote_kinds.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1343,7 +1384,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "73 as migration_inventory_count",
+        "76 as migration_inventory_count",
         "20261014000000-down,20261013000000-down,20261012000000-down,20261011000000-down,20260923000001-down",
         "20260923000001-up,20261011000000-up,20261012000000-up,20261013000000-up,20261014000000-up",
         "0037 internal facets base remained directly executable",

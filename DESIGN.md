@@ -30,12 +30,30 @@
 6. **Official and fiscalización remain unmistakably separate.** They can be juxtaposed but never visually or numerically collapsed into one source.
 7. **No decorative dashboard language.** Avoid generic KPI grids, pie charts, gauges, gradients, blobs, oversized radii, and motion without explanatory value.
 
+### Panorama source disclosure (#457)
+
+Panorama keeps one visible **Resultados oficiales** source badge and one native,
+initially collapsed **Fuente y límites** disclosure. That panel owns supporting
+geographic applicability, scope, denominator, granularity, completeness breakdowns,
+quarantine reasons, exclusions and archive provenance. Fiscalización is explicitly
+identified there as an unofficial, separately queried source whose figures never mix
+with Panorama. The circuit winner/margin map retains its encoding legend; when it
+is unavailable, the neutral fallback retains its controls and evidence link without
+repeating supporting qualifications in its overlay, legend and footer.
+
+Refusal/empty/unavailable states and provisional leadership remain beside the result;
+they appear only once and never become hidden supporting evidence. Selecting an
+unsupported territory suppresses the previous selection's figures and provenance.
+The shared explorer map and global legal disclaimer are unchanged (the latter belongs
+to #459); #458's broader Panorama layout reduction remains separate.
+
 ## Information Architecture
 
 ### Global shell
 
 - **Desktop:** Persistent `218px` navy rail (`190px` at ≤1250px) with a bottom workspace/account cluster and a lightweight topbar, per `docs/prototypes/territorial-exploration/APPROVED-DESIGN.md`. The prototype's `78px` icon rail is not adopted: it hides the footer, and the workspace/account controls must stay reachable.
 - **Mobile:** At ≤980px the rail becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
+- **Page container (#461):** Every authenticated route (including loading, denied and error states) uses `ApplicationShell`'s `#main-content` container: the existing `72rem` maximum width and safe-area-aware `1rem` minimum horizontal gutter. Route grids may retain structural wrappers but cannot add another page gutter or width cap. Page padding is `2rem` above / `4rem` below, reduced to `1rem` / `3rem` below `48rem`. Public login remains independent. `page-container.css` owns this geometry with shell-scoped specificity so route CSS and soft navigation cannot change it.
 - **Topbar responsibility:** Mobile navigation trigger and authorized review status only.
 - **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch and account actions.
 - **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Crossing the breakpoint restores focus to a visible control.
@@ -79,8 +97,7 @@ its separate unofficial-source note. Each current route appears exactly once.
 
 | Token | Size / line-height | Usage |
 | --- | --- | --- |
-| Briefing title | `2rem / 1.2` | Operational home; `1.75rem` on mobile |
-| Redesigned route title | `2rem / 1.2` | Comparison, official explorer, Municipal and Fiscalización; login uses `1.5rem` |
+| Authenticated page title | `2rem / 1.2` | All authenticated routes and refusal/loading states; `1.75rem` below `48rem`, weight `500`, tracking `-0.03em`; login remains `1.5rem` |
 | Redesigned section | `1.25rem / 1.3` | Exact comparison/explorer results; applied-context headings use `1rem` |
 | `h3` | `1rem / 1.3` | Panel and table section |
 | `body` | `0.875rem / 1.55` | Primary explanatory copy |
@@ -88,7 +105,7 @@ its separate unofficial-source note. Each current route appears exactly once.
 | `label` | `0.6875rem / 1.2` | Controls and metadata |
 | `micro` | `0.625rem / 1.2` | Compact machine evidence only |
 
-Existing non-redesigned routes retain their route-specific heading scales until their own delivery slice. Body copy never drops below `0.8125rem` for dense analytical surfaces; comparison controls remain at least `0.875rem`.
+All authenticated page `h1` headings share the shell-owned scale (#461); route-specific panel and section scales remain unchanged. Body copy never drops below `0.8125rem` for dense analytical surfaces; comparison controls remain at least `0.875rem`.
 
 ## Color
 
@@ -143,11 +160,15 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, context, chart, exact table, and evidence stack in reading order. Selector changes automatically update the authorized comparison; there is no Apply step. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
 - **Panorama:** The authorized home keeps the observed first place, supplied positive-vote share, margin and authorized circuit map together, with a compact 280px SVG viewport (also used by the neutral reference fallback). The circuit table follows immediately, then a closed native **Fuente y límites** disclosure for positive-vote distribution, detailed completeness and supporting evidence; existing next-action links remain available below. Official-only identity, provisional/refusal state, denominator and source/report granularity stay beside the headline. Ties and zero votes do not acquire a winner. The circuit map preserves the shared official winner/margin encoding and visible legend from #444; when outcomes or geometry are unavailable, it falls back to the neutral reference outline. This slice does not claim completion of #457: shared map/source caveats are retained pending its deduplication work. Desktop fold geometry is specified at 1440×900 in the root Playwright spec; browser verification is still required.
 - **Official explorer:** Served-selection header/trail → election/category followed by the existing territorial/report controls → map/inspector workbench → applied scope and full-width exact evidence. The inspector is 322px, 295px at ≤1250px, 275px at ≤980px and stacks below the map at ≤760px. Exact-section Rosales circuits load automatically through client-side lazy imports; other unsupported scopes disclose unavailable geography rather than inventing a map. The inspector names the authorized territory, keeps the unchanged section-completeness sentence, and reports all-group observed leadership, positive votes and supplied total votes. Party evidence, eligible PASO internas, circuit evidence, schools and reference/provenance follow in that order. Supporting archive details start collapsed; source exclusions, granularity and unavailable school qualifiers stay inline. Territorial selectors remain until T3b; URL keys and the served/draft suppression boundary are unchanged.
+- **Panorama circuit map (#444):** The Rosales map and circuit table use the same authorized official `circuitOutcomes` response; no second electoral query or fiscalización input is used. The map reuses Exploration’s `CircuitReferenceSvg`, C1 colors, margin bands and legend. Partial circuits are hatched and retain provisional coverage labels. Ties, zero votes and units without attributable outcomes remain neutral. CNE geometry is reference-only, with its B/C overlap disclosed once in Fuente y límites and the shared area neutral/hatched. Geometry failure leaves the neutral reference fallback and never suppresses the table. National/provincial selections never reuse Rosales results. This slice is read-only: URL selection and map/table hover synchronization belong to #445/#446.
+- **Municipal CNE 2025 reference legend:** The circuit/local reference SVG keeps its shared HTML legend visible below the map at desktop and mobile widths (1440px and 390px). It identifies circuit outlines as reference-only, dots as voting locations with coordinates, and explicitly counts locations without coordinates: those are not plotted but remain in the complete locations table. No electoral result or inferred location is encoded.
 - **Panorama circuit map (#444):** The Rosales map and circuit table use the same authorized official `circuitOutcomes` response; no second electoral query or fiscalización input is used. The map reuses Exploration’s `CircuitReferenceSvg`, C1 colors, margin bands and legend. Partial circuits are hatched and retain provisional coverage labels. Ties, zero votes and units without attributable outcomes remain neutral. CNE geometry is reference-only, with its B/C overlap disclosed once next to the map and the shared area neutral/hatched. Geometry failure leaves the neutral reference fallback and never suppresses the table. National/provincial selections never reuse Rosales results. This slice is read-only: URL selection and map/table hover synchronization belong to #445/#446.
 - **Municipal:** The single configured official election loads automatically on route entry, after existing query and authorization guards. Compact fixed context precedes full-width raw identified-party votes and the exact table. Source audits, exclusions, unresolved identities and granularity remain inline; supporting archive references follow in native disclosures, with missing-hash/non-OK status qualifications outside.
 - **Fiscalización:** Group election and territory selectors above full-width evidence. Preserve the explicit unofficial source, nonrandom-sample and official-denominator qualifications. Unit coverage precedes exact list/granularity rows and uncovered-unit detail; only supporting archive references collapse, never verification warnings or truncation/exclusion counts.
-- **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
+- **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links. At ≤480px, Exploration filters and Evidence context use one field per row. Native selectors retain their keyboard/GET behavior and show their full selected text again in a wrapping visual-only line beneath the control, rather than relying on the browser's clipped single-line value. Mobile form controls/actions retain at least 44px targets; labels and action copy wrap. The [#463 audit](docs/audits/463-mobile-forms.md) distinguishes code/test coverage from still-pending browser execution and screenshot acceptance.
 - **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
+- **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
+- **Simulation:** The desktop page header reserves right-side space for the scenario summary; its `h1` starts at the shared page gutter but need not span the full page width. Cross-route geometry checks compare the page's right edge, not the title's right edge. Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
 - **Touch targets:** At least `44×44px`.
 
 ## Component Architecture
@@ -203,6 +224,8 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 
 ## Data Visualization
 
+- **Map prominence follows data:** data maps are large; reference-only maps render as small locators (at most 20rem wide) next to the data/context, stacking on narrow screens. Title them “Referencia territorial”, retain the no-results and applicability qualifiers and shared neutral legend. Supporting provenance, including hashes, belongs in a labelled native evidence disclosure, reachable without JavaScript; never discard it. Keep one clear navigation action in the locator rather than overlapping destination links.
+
 - Exact-value tables are the canonical representation.
 - Comparison pairs Side A/Side B on one 0–100% scale, retaining each side's party name. Its denominator is the supplied party-vote total, not turnout or all ballots. Include every compared party.
 - Official exploration uses one 0–100% scale and the supplied party-vote shares with the explicit result total denominator. Include every party, including zero and unmapped identities. A null share at a zero denominator is unavailable, not zero percent; no mark implies a fabricated share. Exact tables stay canonical.
@@ -245,6 +268,7 @@ scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates del
   non-color cues. No missing value becomes zero; partial circuit leadership is
   provisional, never a certified winner. Its hatched label floors counted/expected
   coverage and never displays 100 % unless complete.
+- **Panorama circuit selection (#445):** When authorized official circuit membership and server-supplied reference geometry are available for Rosales, Panorama reuses the #444 `CircuitReferenceSvg` map and its existing legend/RPC outcomes (no second results source or parallel geometry loader). Click, Enter or Space selects a circuit, marks its exact row and filters the table to that row. `selectedCircuit` is a Panorama-local URL key, not the served `circuitoCode`/`level` drilldown scope: section totals and their denominator never change. Reload and browser Back/Forward restore selection; unrelated query keys survive. Unknown codes are ignored, not normalized at a new boundary. Clearing selection restores the existing name/code search; editing search clears selection, and changing territory clears it too. Exact-result links still navigate explicitly to Exploration. Denied, unavailable and unknown-membership states never expose circuit figures or an interactive results map. Municipal polling-place selection remains the separate #448 scope. Geometry retains its reference-only disclosure, partial/overlap hatching and exact-table fallback.
 - **Interaction:** Select/focus a unit to synchronize detail and exact evidence;
   explicit drilldown changes served scope and camera together. Breadcrumbs, back,
   reset-view and non-pointer controls preserve orientation. No hover-only evidence.
@@ -410,6 +434,8 @@ New product features discovered during design become separate future work units.
 ## Session Continuity Contract
 
 - An already-open protected page verifies session validity on mount, when it becomes visible/focused, and at a bounded 60-second interval while visible. This is an access check, not a realtime electoral-data feed.
-- Verified ended authentication or fixed workspace expiration/revocation replaces the page with login, discarding the protected client-router cache. Healthy token renewal remains transparent.
+- Verified ended authentication or fixed workspace expiration/revocation replaces the page with login, discarding the protected client-router cache. Healthy token renewal remains transparent. The current allowed page and its supplied query travel through `returnTo`; successful password sign-in returns there with fresh authorization, never cached electoral evidence.
+- Anonymous exact analysis links use the same return contract. Missing, external, protocol-relative, malformed, fragment-bearing or unsupported destinations fall back to `/`. The allow-list and login URL encoding live in one directive-free module shared by middleware, server guards/actions and the session monitor. Return destinations are limited to 8,192 UTF-16 code units before login URL encoding; larger values fall back to `/` without truncation. The longest measured shipped Rosales scenario/editor/transfer/sweep URL is 2,542 characters, leaving over 3× headroom (regression coverage regenerates those URLs through production adapters). Caller-authored scenario URLs have no inherent finite maximum, so oversized custom scenarios intentionally do not resume. Encoded pathname separators are refused; encoded slashes/backslashes inside query values remain data because the exact literal pathname is allow-listed and redirects never use the decoded destination. Existing destination pages retain electoral canonicalization and source validation; the auth boundary does not rewrite scenario inputs or persist unsent drafts.
+- If a new session requires an organization, it stays on the requested route while the existing authorized organization selector refreshes that page. Denied/revoked data access must still suppress figures and provenance. This does not add automatic organization selection or the future inline refusal selector (#425/#427). Explicit sign-out remains bare `/login`, without a resume destination.
 - Temporary connection/service failures and workspace membership/selection states are not evidence of a logged-out session. They must not cause automatic logout.
 - The read-only, private/no-store session probe returns status only, using the existing verified workspace boundary without bootstrapping a context or listing organizations. Tokens remain in HttpOnly cookies; database lifetime rules and the explicit signout action remain unchanged.

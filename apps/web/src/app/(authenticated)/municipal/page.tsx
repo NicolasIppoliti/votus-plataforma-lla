@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
 import { Alert } from "@/components/ui/alert";
+import { RosalesAdministrativeDetails, RosalesTerritoryName } from "@/components/RosalesAdministrativeContext";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
 import { REFERENCE_STYLE } from "@/components/maps/reference-colors";
@@ -278,7 +279,7 @@ export function renderMunicipalView(
           <p>Resultados municipales · {is2023 ? "Cuerpo municipal (rótulo DINE: INTENDENTE)" : "Concejales"} · Fuente oficial</p>
           <MunicipalElectionSwitch year={year} />
           <p>Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.</p>
-          {is2023 ? <p role="note">El archivo DINE 2023 registra 153 mesas y 10 códigos de circuito para 02/027; son datos del archivo, no cobertura confirmada de esta proyección ni límites geográficos vigentes.</p> : null}
+          {is2023 ? <p role="note">El archivo DINE 2023 registra 153 mesas y 10 códigos de circuito para Coronel Rosales; son datos del archivo, no cobertura confirmada de esta proyección ni límites geográficos vigentes.</p> : null}
         </header>
         <div className={styles.workbench} role="region" aria-label="Mesa de trabajo municipal">
         <section className={styles.context} aria-label="Detalle municipal" aria-labelledby="municipal-context-heading">
@@ -286,25 +287,25 @@ export function renderMunicipalView(
           <dl className={styles.scope}>
             <div><dt>Elección</dt><dd>{is2023 ? "2023 · Generales · escrutinio provisorio" : "2025 · Provinciales · escrutinio definitivo"}</dd></div>
             <div><dt>Categoría</dt><dd>{is2023 ? "INTENDENTE (rótulo de fuente para el cuerpo municipal)" : "Concejales"}</dd></div>
-            <div><dt>Territorio autorizado</dt><dd>Coronel Rosales</dd></div>
-            <div><dt>Identidad nacional</dt><dd><code>Distrito 02 · Sección 027</code></dd></div>
+            <div><dt>Territorio autorizado</dt><dd><RosalesTerritoryName /></dd></div>
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
           </dl>
+          <RosalesAdministrativeDetails />
         </section>
-        {section ? <section className={styles.reference} aria-label="Referencia geográfica de sección">
-          <h2>Referencia geográfica de sección</h2>
+        {section ? <section className={styles.reference} data-map-kind="locator" aria-label="Referencia geográfica de sección">
+          <h2>Referencia territorial</h2>
           {section.status === "ok" ? <>
             <p>Contorno CNE: {section.name}. Referencia geográfica únicamente; vigencia electoral no verificada para {year}.</p>
             <SectionOutline coordinates={section.geometry.coordinates} />
             <MunicipalSectionMap coordinates={section.geometry.coordinates} name={section.name} />
-            <p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p>
+            <details><summary>Archivo geográfico CNE</summary><p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p></details>
           </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
         </section> : null}
         </div>
         <section className={styles.results} aria-labelledby="municipal-results-heading">
           <header className={styles.sectionHeading}>
             <h2 id="municipal-results-heading" tabIndex={-1}>Resultados exactos</h2>
-            <p role="status">Resultados oficiales autorizados por partido · {is2023 ? "provisorio" : "definitivo"} · sección 02/027.</p>
+            <p role="status">Resultados oficiales autorizados por partido · {is2023 ? "provisorio" : "definitivo"} · <RosalesTerritoryName />.</p>
           </header>
           <section className={styles.coverage} aria-labelledby="municipal-coverage-heading">
             <h3 id="municipal-coverage-heading">Cobertura y exclusiones</h3>
@@ -335,7 +336,7 @@ export function renderMunicipalView(
           ) : (
             <>
               <MunicipalDistribution parties={partyTotals} />
-              <TableRegion label="Tabla de resultados oficiales exactos por partido">
+              <TableRegion mobileHint label="Tabla de resultados oficiales exactos por partido">
                 <Table className="data-table">
                   <caption>Resultados oficiales exactos por partido y votos</caption>
                   <thead>

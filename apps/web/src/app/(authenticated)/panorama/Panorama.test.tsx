@@ -3,14 +3,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ExplorationOk } from "@/lib/results/exploration";
 import type { PanoramaData } from "./load-panorama";
 import { Panorama } from "./Panorama";
+import { OperationalBriefing } from "../OperationalBriefing";
 import { circuitBandColor } from "@/components/maps/reference-colors";
 import { circuitPresentation } from "@/lib/geography/circuit-presentation";
 import { PanoramaChildren } from "./PanoramaChildren";
 import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
-const { states } = vi.hoisted(() => ({ states: [] as string[] }));
+const { states } = vi.hoisted(() => ({ states: [] as (string | null)[] }));
 vi.mock("react", async importOriginal => ({ ...await importOriginal<typeof import("react")>(), useState: (initial: unknown) => [states.length ? states.shift() : initial, vi.fn()] }));
-vi.mock("../drilldown/TerritorialMapStage", async importOriginal => ({ ...await importOriginal<typeof import("../drilldown/TerritorialMapStage")>(), TerritorialMapStage: ({ heading }: { heading: string }) => <div>Mapa de referencia · {heading}</div> }));
+vi.mock("../drilldown/TerritorialMapStage", async importOriginal => ({ ...await importOriginal<typeof import("../drilldown/TerritorialMapStage")>(), TerritorialMapStage: ({ heading, children, footer }: { heading: string; children?: import("react").ReactNode; footer?: import("react").ReactNode }) => <div>Mapa de referencia · {heading}{children}{footer}</div> }));
 afterEach(() => { states.length = 0; });
 const result: ExplorationOk = {
   status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
@@ -20,6 +21,7 @@ const result: ExplorationOk = {
 };
 const data: PanoramaData = {
   href: "/drilldown?electionId=election&categoryId=category&distritoCode=02&seccionCode=027&level=seccion", exclusions: [],
+  circuitGeometry: [{ code: "00248", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] }],
   circuitOptions: [{ code: "00248", name: "Norte", nameStatus: "present", nameVariantCount: 1 }, { code: "00249", name: "Sur", nameStatus: "present", nameVariantCount: 1 }],
   evidence: {
     status: "ok", result, provenance: { items: [], sourceExclusions: [] },
@@ -34,6 +36,15 @@ const data: PanoramaData = {
     },
   },
 };
+
+it("renders transient circuit emphasis without changing persistent selection (#446)", () => {
+  states.push("Coronel Rosales", "00248", "00249", null, "");
+  const geometry = [...data.circuitGeometry!, { ...data.circuitGeometry![0]!, code: "00249" }];
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, circuitGeometry: geometry }} />);
+  expect(html).toMatch(/stroke-width="3"[^>]*aria-pressed="false"[^>]*aria-label="Circuito 00249:/);
+  expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="Circuito 00248:/);
+  expect(html).toContain("Circuito seleccionado: 00248");
+});
 
 it("shares the compact rule with Exploration, keeps every unmapped ID separate and never invents null shares", () => {
   const parties: ExplorationOk["parties"] = [...result.parties,
@@ -130,13 +141,82 @@ it("keeps the headline beside the map and folds supporting evidence after the ci
   expect(summary).toContain("4,55 pp");
   expect(summary).not.toContain("Distribución de votos positivos oficiales");
   expect(summary).not.toContain("Votos positivos oficiales</dt>");
-  const disclosure = html.indexOf('<summary>Fuente y límites</summary>');
+  const disclosure = html.indexOf('<summary id="official-evidence-heading">Fuente y límites</summary>');
   expect(disclosure).toBeGreaterThan(html.indexOf('id="panorama-children-heading"'));
   const detailsStart = html.lastIndexOf('<details', disclosure);
   expect(html.slice(detailsStart, disclosure)).not.toContain('open');
   expect(html.slice(disclosure)).toContain('Distribución de votos positivos oficiales');
-  expect(html.slice(disclosure)).toContain('Límites y evidencia');
+  expect(html.slice(disclosure)).toContain('Granularidad real de la fuente');
   expect(summary).toContain('Completitud no confirmada');
+});
+
+it("collects supporting caveats once in a collapsed source disclosure", () => {
+  const html = renderToStaticMarkup(<OperationalBriefing data={data} />);
+  expect(html).toContain('<summary id="official-evidence-heading">Fuente y límites</summary>');
+  expect(html).not.toContain('<details open');
+  const panel = html.slice(html.indexOf('<summary id="official-evidence-heading">'));
+  for (const caveat of ["No hay participación", "Granularidad real", "Sin membresía:", "Aplicabilidad electoral desconocida", "Fiscalización es una fuente no oficial"]) {
+    expect(panel).toContain(caveat);
+    expect(html.split(caveat)).toHaveLength(2);
+  }
+  expect(html.split("Completitud no confirmada; el primer lugar observado es provisional.")).toHaveLength(2);
+  expect(html).not.toContain("Lo que se puede leer aquí");
+});
+
+it.each(["authorization_denied", "unavailable", "empty"] as const)("keeps source disclosure free of stale evidence on %s", status => {
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, evidence: status === "authorization_denied" ? { status, access: "denied" } : { status } }} />);
+  expect(html).toContain("Fuente y límites");
+  expect(html).not.toContain("220");
+  expect(html).not.toContain("Archivo ");
+});
+
+it("keeps the real Panorama map controls but delegates its repeated qualifications to the disclosure", async () => {
+  const { TerritorialMapStage } = await vi.importActual<typeof import("../drilldown/TerritorialMapStage")>("../drilldown/TerritorialMapStage");
+  const { MAP_HEADING } = await import("../drilldown/map-heading");
+  const html = renderToStaticMarkup(<TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno" referenceRosales consolidatedLimits />);
+  expect(html).toContain('aria-label="Acercar mapa"');
+  expect(html).toContain('href="#official-evidence-heading"');
+  expect(html).not.toContain("no cobertura electoral");
+  expect(html).not.toContain("Aplicabilidad electoral desconocida");
+  const explorer = renderToStaticMarkup(<TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno" referenceRosales />);
+  expect(explorer).toContain("Referencia geográfica, no cobertura electoral");
+  expect(explorer).toContain("Aplicabilidad electoral desconocida");
+});
+
+it("filters and marks the selected circuit without changing its exact drilldown link (#445)", () => {
+  const selection = { selectedCircuit: "00248", onClearSelection: () => {} };
+  const html = renderToStaticMarkup(<PanoramaChildren data={data} {...selection} />);
+  expect(html).toContain('aria-selected="true"');
+  expect(html).toContain('1 visibles · 2 circuitos disponibles');
+  expect(html).toContain('Quitar selección de circuito');
+  expect(html).toContain('level=circuito&amp;circuitoCode=00248');
+  expect(html).toContain('<tr hidden="" aria-selected="false"');
+});
+
+it("restores only a circuit present in the official Panorama outcomes (#445)", () => {
+  states.push("Coronel Rosales", "00248");
+  const selected = renderToStaticMarkup(<Panorama data={data} />);
+  expect(selected).toContain('aria-selected="true"');
+  expect(selected).toContain("Circuito seleccionado: 00248");
+  states.push("Coronel Rosales", "unknown");
+  const invalid = renderToStaticMarkup(<Panorama data={data} />);
+  expect(invalid).not.toContain('aria-selected="true"');
+  expect(invalid).toContain("2 visibles · 2 circuitos disponibles");
+});
+
+it("circuit selection takes precedence over an earlier text search (#445)", () => {
+  states.push("sur");
+  const html = renderToStaticMarkup(<PanoramaChildren data={data} selectedCircuit="00248" onClearSelection={() => {}} />);
+  expect(html).toContain("1 visibles · 2 circuitos disponibles");
+  expect(html).not.toContain("No hay circuitos que coincidan");
+  expect(html).toContain('aria-selected="true"');
+});
+
+it("reaches the shared circuit map from Panorama with official membership (#445)", () => {
+  const html = renderToStaticMarkup(<Panorama data={data} />);
+  expect(html).toContain("Ganadores por circuito");
+  expect(html).toContain("Circuito 00248: Grupo 6;");
+  expect(html).toContain("Geometría no certificada como límite electoral 2025");
 });
 
 it("renders the shared circuit encoding from the table outcomes on the real Panorama", () => {
@@ -155,13 +235,30 @@ it("renders the shared circuit encoding from the table outcomes on the real Pano
   expect(summary).toContain("27,27 %");
   expect(summary).toContain("4,55 pp");
   expect(summary).not.toContain("Distribución de votos positivos oficiales");
-  const disclosure = html.indexOf('<summary>Fuente y límites</summary>');
+  const disclosure = html.indexOf('<summary id="official-evidence-heading">Fuente y límites</summary>');
   expect(disclosure).toBeGreaterThan(html.indexOf('id="panorama-children-heading"'));
-  expect(html.slice(disclosure)).toContain("Panorama muestra el primer lugar observado y margen por circuito.");
+  expect(html.slice(disclosure)).toContain("Panorama muestra el primer lugar observado y margen por circuito cuando están disponibles.");
   expect(html).not.toContain("Panorama termina en el partido");
+  const panel = html.slice(html.indexOf('<summary id="official-evidence-heading">'));
+  for (const caveat of ["Aplicabilidad electoral desconocida", "0248B y 0248C se superponen en la fuente", "Fiscalización es una fuente no oficial"]) {
+    expect(panel).toContain(caveat);
+    expect(html.split(caveat)).toHaveLength(2);
+  }
+  expect(html).not.toContain("Lo que se puede leer aquí");
+  expect(html).not.toContain("Panorama termina en el partido");
+  expect(html).not.toContain("sin mapa de ganadores disponible");
+  expect(html).not.toContain('<details open');
   const presentation = circuitPresentation(circuits[0]!);
   expect(html).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
-  expect(html).not.toContain('role="button" aria-label="Circuito');
+  states.push("Coronel Rosales", "00248");
+  const selected = renderToStaticMarkup(<Panorama data={mapped} />);
+  expect(selected).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
+  expect(selected).toContain('data-hatched="true"');
+  expect(selected).toContain('aria-pressed="true" aria-label="Circuito 00248:');
+  expect(selected).toContain('aria-selected="true"');
+  expect(selected).toContain("1 visibles · 2 circuitos disponibles");
+  expect(html).toContain('role="button"');
+  expect(html).toContain('aria-pressed="false" aria-label="Circuito 00248:');
   const complete = { ...mapped, evidence: { ...evidence, circuitOutcomes: evidence.circuitOutcomes } };
   expect(renderToStaticMarkup(<Panorama data={complete} />)).not.toContain('data-hatched="true"');
   for (const votes of [[50, 50], [52, 48], [55, 45], [0, 0]]) {
@@ -183,7 +280,9 @@ it("renders the shared circuit encoding from the table outcomes on the real Pano
 });
 
 it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {
-  const html = renderToStaticMarkup(<Panorama data={data} />);
+  const evidence = data.evidence!;
+  if (evidence.status !== "ok") throw new Error("fixture must be ok");
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, evidence: { ...evidence, circuitOutcomes: { status: "unavailable" } } }} />);
   expect(html).toContain("Mapa de referencia · Referencia territorial");
   expect(html).not.toContain("Ganadores en el territorio");
 });

@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
 import { LoginForm } from "./login-form";
+import { returnDestination } from "@/lib/auth/return-destination";
 import "./login.css";
 
 /**
  * The one public route this app exposes (task 9.5/9.6). Deliberately
  * outside `(authenticated)/`, deliberately carries no electoral data.
  */
-export default function LoginPage(): ReactNode {
+export default async function LoginPage({ searchParams }: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<ReactNode> {
+  const destination = returnDestination((await searchParams)["returnTo"]);
   return (
     <main id="main-content" className="login-page" tabIndex={-1}>
       <header className="login-brand" aria-label="Acceso a Votus">
@@ -23,7 +27,7 @@ export default function LoginPage(): ReactNode {
             Accede con tus credenciales para continuar.
           </p>
         </header>
-        <LoginForm />
+        <LoginForm returnTo={destination} />
         <p className="login-card__access">Acceso exclusivo para usuarios autorizados.</p>
       </section>
     </main>

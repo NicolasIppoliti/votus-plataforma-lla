@@ -52,6 +52,29 @@ async function signInToMonitoredPage(page: Page): Promise<void> {
 const isSessionProbe = (request: { url(): string }): boolean => new URL(request.url()).pathname === "/api/session";
 
 test.describe("no anonymous read path", () => {
+  test("a supplied simulation survives anonymous sign-in and definitive session expiry", async ({ page, context }) => {
+    await page.clock.install();
+    const input = { level: "pba_municipal", totalVotes: 10000, blankVotes: 0, annulledVotes: 0,
+      unmodeledVotes: 0, unmodeledVoteBreakdown: [], seatsToFill: 9, isProjection: true,
+      granularity: "seccion", lists: [{ listId: "A", listName: "Lista A", votes: 6000 }, { listId: "B", listName: "Lista B", votes: 4000 }] };
+    const destination = `/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`;
+    await page.goto(destination);
+    await expect.poll(() => new URL(page.url()).searchParams.get("returnTo")).toBe(destination);
+    const login = async (): Promise<void> => {
+      await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
+      await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
+      await page.getByRole("button", { name: "Iniciar sesión" }).click();
+      await expect.poll(() => new URL(page.url()).pathname + new URL(page.url()).search).toBe(destination);
+      await expect(page.getByTestId("allocation-result")).toBeVisible();
+    };
+    await login();
+    await context.clearCookies();
+    await page.clock.fastForward(60_000);
+    await expect.poll(() => new URL(page.url()).searchParams.get("returnTo")).toBe(destination);
+    await expect(page.getByTestId("allocation-result")).toHaveCount(0);
+    await login();
+    expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
+  });
   test("an already-open protected page returns to login when its session disappears", async ({ page, context }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.clock.install();
@@ -361,7 +384,8 @@ test.describe("no anonymous read path", () => {
     await signOutControl.focus();
     await expect(signOutControl).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page).toHaveURL(/\/login/);
+    // Explicit sign-out intentionally does not offer automatic resumption.
+    await expect(page).toHaveURL(/\/login$/);
 
     const cookiesAfterSignOut = await context.cookies();
     const cookieNamesAfterSignOut = new Set(

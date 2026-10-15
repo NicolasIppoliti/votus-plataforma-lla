@@ -4,9 +4,89 @@ import { createClient } from "@supabase/supabase-js";
 
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
+import { expectMobileFormGeometry } from "./mobile-form-geometry";
 
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
+
+for (const width of [320, 390]) {
+  test(`every route and workspace form stays readable at ${width}px (#463)`, async ({ page }) => {
+    // Existing authorized fixture; no screenshots or data dumps are retained.
+    await withReviewItem(page, async () => {
+      await page.setViewportSize({ width, height: 844 });
+      for (const route of ["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/evidencia", "/review", "/scenarios", "/simulate"]) {
+        await test.step(route, async () => {
+          await page.goto(route);
+          await expect(page.locator("#main-content h1").first()).toBeVisible();
+          await expect(page).not.toHaveURL(/\/login/);
+          const root = page.locator("#main-content");
+          // Open form-owned pickers, including disabled alternate-scope controls.
+          const pickers = root.locator("details").filter({ has: page.locator("select, input") });
+          for (let index = 0; index < await pickers.count(); index++) {
+            const picker = pickers.nth(index);
+            if (!await picker.evaluate(element => (element as HTMLDetailsElement).open)) await picker.locator(":scope > summary").click();
+          }
+          if (["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"].includes(route)) {
+            await expect(page.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true })).toBeVisible();
+          }
+          if (route === "/evidencia") await expect(page.getByRole("form", { name: "Contexto de la evidencia" })).toBeVisible();
+          await expectMobileFormGeometry(page, page.locator(".app-shell__workspace"));
+          await page.getByRole("button", { name: "Abrir navegación" }).click();
+          const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+          await expect(drawer.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
+          await drawer.locator("summary").filter({ hasText: "Cuenta" }).click();
+          await expectMobileFormGeometry(page, drawer);
+          await drawer.getByRole("button", { name: "Cerrar navegación" }).click();
+        });
+      }
+    });
+  });
+
+  test(`login form stays labelled and bounded at ${width}px (#463)`, async ({ browser, baseURL }) => {
+    if (!baseURL) throw new Error("mobile form audit requires the configured E2E base URL");
+    const context = await browser.newContext({ baseURL, storageState: emptyStorageState(), viewport: { width, height: 844 } });
+    try {
+      const page = await context.newPage();
+      await page.goto("/login");
+      await expect(page.getByLabel("Correo electrónico")).toBeVisible();
+      await expect(page.getByLabel("Contraseña", { exact: true })).toBeVisible();
+      await expectMobileFormGeometry(page, page.locator("body"));
+    } finally { await context.close(); }
+  });
+}
+
+test("authenticated routes share page gutter and title scale", async ({ page }) => {
+  const routes = ["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/evidencia", "/review", "/fiscalizacion"];
+  for (const width of [320, 390, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    let sharedLeft: number | undefined;
+    let sharedRight: number | undefined;
+    for (const route of routes) {
+      await page.goto(route);
+      const title = page.locator("#main-content h1");
+      await expect(title).toBeVisible();
+      await expect(title).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
+      await expect(title).toHaveCSS("line-height", width < 768 ? "33.6px" : "38.4px");
+      const geometry = await title.evaluate(node => {
+        const box = node.getBoundingClientRect();
+        // Simulation reserves desktop header space for its scenario summary.
+        // The title must start at the page gutter, not fill that reserved space.
+        const pageBox = node.closest("main")!.getBoundingClientRect();
+        const container = document.getElementById("main-content")!;
+        const shell = container.getBoundingClientRect();
+        const style = getComputedStyle(container);
+        return { left: box.left, right: pageBox.right, expectedLeft: shell.left + parseFloat(style.paddingLeft), expectedRight: shell.right - parseFloat(style.paddingRight) };
+      });
+      expect(Math.abs(geometry.left - geometry.expectedLeft), route).toBeLessThan(1);
+      expect(Math.abs(geometry.right - geometry.expectedRight), route).toBeLessThan(1);
+      sharedLeft ??= geometry.left;
+      sharedRight ??= geometry.right;
+      expect(Math.abs(geometry.left - sharedLeft), route).toBeLessThan(1);
+      expect(Math.abs(geometry.right - sharedRight), route).toBeLessThan(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), route).toBe(true);
+    }
+  }
+});
 
 async function expectNoSevereAccessibilityIssues(page: Page) {
   const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
@@ -408,12 +488,31 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
   });
 });
 
+test("Panorama exposes supporting limits once through a keyboard-operated disclosure", async ({ page }) => {
+  await page.goto("/");
+  const main = page.getByRole("main");
+  const disclosure = main.locator("details").filter({ has: page.locator("summary", { hasText: "Fuente y límites" }) });
+  const toggle = disclosure.locator("summary");
+  await expect(toggle).toHaveCount(1);
+  await expect(disclosure).not.toHaveAttribute("open", "");
+  await expect(main.getByText("Resultados oficiales", { exact: true })).toBeVisible();
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(disclosure).toHaveAttribute("open", "");
+  for (const text of ["Fiscalización es una fuente no oficial", "Aplicabilidad electoral desconocida", "No hay participación, comparación histórica ni pronóstico"]) {
+    await expect(main.getByText(text, { exact: false })).toHaveCount(1);
+    await expect(disclosure.getByText(text, { exact: false })).toBeVisible();
+  }
+  await page.keyboard.press("Enter");
+  await expect(disclosure).not.toHaveAttribute("open", "");
+});
+
 test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   await expect(heading).toBeVisible();
-  await expect(heading).toHaveCSS("font-size", "34px");
+  await expect(heading).toHaveCSS("font-size", "32px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();
   const attention = main.getByRole("complementary", { name: "Atención operativa" });
@@ -537,7 +636,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(drawerTrigger).toHaveAttribute("aria-expanded", "true");
     expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     await expect(closeDrawer).toBeFocused();
-    await expect(drawer).toContainText(
+    await expect(drawer).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     for (const groupLabel of [
@@ -671,7 +773,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     expect(
       Math.abs(topbarContainer!.x - contentContainer!.x),
     ).toBeLessThanOrEqual(1);
-    await expect(sidebar).toContainText(
+    await expect(sidebar).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     await expect(
@@ -710,7 +815,11 @@ test.describe("the production root preserves its authentication boundary", () =>
 
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
-    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
+    const explorationHref = await officialRoutes.getByRole("link", { name: "Explorar resultados", exact: true }).getAttribute("href");
+    expect(explorationHref).not.toBeNull();
+    const carried = new URL(explorationHref!, page.url()).searchParams;
+    carried.delete("level");
+    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", `/compare${carried.size ? `?${carried}` : ""}`);
     // Municipal is a separated flow in the approved Panorama, outside the official routes.
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");

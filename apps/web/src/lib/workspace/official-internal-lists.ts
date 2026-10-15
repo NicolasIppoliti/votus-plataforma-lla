@@ -23,7 +23,12 @@ const success = z.object({
   ...envelope, status: z.literal("ok"), source_kind: z.literal("official"), level: z.literal("seccion"),
   source_granularity: z.enum(["mesa", "establecimiento", "circuito", "seccion"]), category_name: text,
   positive_total: uint, lists: z.array(listSchema).max(1000),
-  non_positive: z.object({ status: z.literal("unavailable"), reason: z.literal("not_persisted_by_national_ingestion") }).strict(),
+  non_positive: z.union([
+    z.object({ status: z.literal("available"), totals: z.object({
+      "EN BLANCO": uint, NULO: uint, IMPUGNADO: uint, RECURRIDO: uint, COMANDO: uint,
+    }).strict() }).strict(),
+    z.object({ status: z.literal("unavailable"), reason: z.enum(["not_reloaded", "conflicting_non_positive_identity"]) }).strict(),
+  ]),
 }).strict();
 const withReason = { ...envelope, reason: text };
 const refusal = z.union([

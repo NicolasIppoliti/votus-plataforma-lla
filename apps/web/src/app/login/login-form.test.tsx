@@ -20,6 +20,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { LoginForm } = await import("./login-form");
+const { default: LoginPage } = await import("./page");
 
 describe("LoginForm", () => {
   beforeEach(() => {
@@ -29,6 +30,18 @@ describe("LoginForm", () => {
       mocks.formAction,
       false,
     ]);
+  });
+
+  it("carries the requested destination through the rendered login page", async () => {
+    // Exercise the server page -> client form seam, not an isolated hidden field.
+    const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({ returnTo: "/compare?electionId=2025&sourceKind=official" }) }) as ReactElement);
+    expect(markup).toContain('name="returnTo"');
+    expect(markup).toContain('value="/compare?electionId=2025&amp;sourceKind=official"');
+  });
+
+  it.each([undefined, ["/compare", "//evil.test"], "//evil.test", "/auth/callback", "/compare?bad=%ZZ"])("renders the safe default for an absent or invalid return destination %j", async (returnTo) => {
+    const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({ returnTo }) }) as ReactElement);
+    expect(markup).toContain('name="returnTo" value="/"');
   });
 
   it("binds a native form action and keeps credentials in uncontrolled named fields", () => {

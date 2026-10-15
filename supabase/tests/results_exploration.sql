@@ -961,7 +961,7 @@ insert into result_row (election_id, jurisdiction_id, category_id, granularity, 
   votes, source_kind, archive_entry_id, source_row_index) values
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027',
     '20000000-0000-0000-0000-000000000003', 'seccion', null, 92, 'fiscalizacion',
-    'fiscalizacion/only-runtime', 29),
+    'fiscalizacion/only-runtime-coarser', 29),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000029',
     '20000000-0000-0000-0000-000000000003', 'mesa', null, 93, 'fiscalizacion',
     'fiscalizacion/only-runtime', 30),

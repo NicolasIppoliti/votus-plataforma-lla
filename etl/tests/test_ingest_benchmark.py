@@ -7,6 +7,49 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_schema_clone_passes_full_tcp_conninfo_explicitly(monkeypatch):
+    from psycopg.conninfo import conninfo_to_dict
+
+    import etl.benchmark as benchmark
+
+    admin = "host=127.0.0.1 port=54322 dbname=template1 user=fixture password=fixture-only"
+    target = "host=127.0.0.1 port=54322 dbname=owned user=fixture password=fixture-only"
+    calls = []
+    verified = []
+
+    def execute(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if "--list" in argv:
+            return SimpleNamespace(
+                stdout=(
+                    b"1; 2615 2200 SCHEMA - public postgres\n"
+                    b"2; 2615 2201 SCHEMA - workspace_private postgres\n"
+                    b"3; 826 2202 DEFAULT ACL public DEFAULT PRIVILEGES FOR TABLES supabase_admin\n"
+                    b"4; 0 2203 ACL public TABLE jurisdiction postgres\n"
+                )
+            )
+        if argv[0] == "pg_restore":
+            assert "--clean" not in argv, "fresh owned targets must not DROP absent policies"
+            assert "--use-list" in argv
+            toc = Path(argv[argv.index("--use-list") + 1]).read_text()
+            assert "SCHEMA - public " not in toc
+            assert "SCHEMA - workspace_private " in toc
+            assert " DEFAULT ACL " not in toc
+            assert "ACL public TABLE jurisdiction" in toc
+        return SimpleNamespace(stdout=b"synthetic-schema")
+
+    monkeypatch.setattr(benchmark.subprocess, "run", execute)
+    database = SimpleNamespace(migration_dsn=target, _verify_target=lambda: verified.append(True))
+    benchmark.clone_schema(admin, database, "postgres")
+    connected = [(argv, kwargs) for argv, kwargs in calls if "--list" not in argv]
+    for index, dbname in ((0, "postgres"), (1, "owned")):
+        argv, _ = connected[index]
+        assert "--dbname" in argv, "Postgres tools need explicit conninfo, not PGDATABASE"
+        actual = conninfo_to_dict(argv[argv.index("--dbname") + 1])
+        assert actual == {**conninfo_to_dict(admin), "dbname": dbname}
+    assert verified == [True]
+
+
 def test_benchmark_cli_rejects_nonlocal_before_database_access(monkeypatch, capsys):
     from etl.benchmark import main
 

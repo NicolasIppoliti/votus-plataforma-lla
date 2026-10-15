@@ -2,6 +2,7 @@
 :global(.app-content):has(> .root) { max-width: none; padding-inline: 0; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 2040px; padding-inline: 34px; gap: 23px; }
 .header { display: grid; gap: 0.5rem; margin-block: 0 0.5rem; }
+.fieldLabel { position: relative; display: flex; align-items: center; gap: 4px; }
 .header h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
 .lede { margin: 0; max-width: 70ch; color: var(--muted-ink); font-size: 0.875rem; }
 .filters, .qualification, .result, .coverage, .state {
@@ -70,4 +71,9 @@
 @media (max-width: 47.999rem) {
   .filters, .qualification, .result, .coverage, .state { padding: 1rem; }
   .layout, .evidence { gap: 1rem; }
+}
+/* Issue 501 mobile */
+@media (max-width: 480px) {
+  .root :global(.table-scroll) { max-height: 360px; overflow: auto; overscroll-behavior-inline: contain; }
+  .root :global(.data-table) :is(th, td) { padding: .625rem .5rem; }
 }

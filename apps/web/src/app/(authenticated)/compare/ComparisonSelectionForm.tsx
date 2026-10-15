@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -128,7 +129,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                 {group.fields.map((field) => (
                   <div className="field" key={field.key}>
                     <label htmlFor={field.id}>{field.label}</label>
-                    <select
+                    <ResponsiveSelect
                       id={field.id}
                       name={URL_KEYS[field.key]}
                       value={state.draft[field.key] ?? ""}
@@ -138,7 +139,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                     >
                       <option value="">{field.placeholder}</option>
                       {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
+                    </ResponsiveSelect>
                   </div>
                 ))}
               </fieldset>

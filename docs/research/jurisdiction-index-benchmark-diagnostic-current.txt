@@ -1,0 +1,4 @@
+BENCHMARK BLOCKER: test grants InsufficientPrivilege SQLSTATE 42501
+OWNED DIAGNOSTIC CLEANUP: database and role absence confirmed by harness
+.
+1 passed in 0.45s
