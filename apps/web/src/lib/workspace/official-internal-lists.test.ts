@@ -19,6 +19,25 @@ beforeEach(() => {
   mocks.claims.mockResolvedValue({ data: { claims: { sub: selection.electionId, session_id: selection.categoryId, exp: Math.floor(Date.now() / 1000) + 3600 } }, error: null });
   mocks.rpc.mockResolvedValue({ data: payload(), error: null });
 });
+it("keeps real non-positive totals separate from positive party shares", async () => {
+  const non_positive = { status: "available", totals: { "EN BLANCO": 2121, NULO: 319, IMPUGNADO: 12, RECURRIDO: 4, COMANDO: 12 } };
+  mocks.rpc.mockResolvedValue({ data: { ...payload(), non_positive }, error: null });
+  const result = await loadOfficialInternalLists(selection);
+  expect(result.status).toBe("ok");
+  if (result.status !== "ok") throw new Error("expected measured totals");
+  expect(result.non_positive).toEqual(non_positive);
+  expect(result.positive_total).toBe(33250);
+  expect(result.lists.find((l) => l.list_id === "135-3016")?.ofPositive?.denominator).toBe(33250);
+});
+it.each([
+  { "EN BLANCO": 2121, NULO: 319, IMPUGNADO: 12, RECURRIDO: 4 },
+  { "EN BLANCO": 2121, NULO: -1, IMPUGNADO: 12, RECURRIDO: 4, COMANDO: 12 },
+  { "EN BLANCO": 2121, NULO: 319, IMPUGNADO: 12, RECURRIDO: 4, COMANDO: Number.MAX_SAFE_INTEGER + 1 },
+  { "EN BLANCO": 2121, NULO: 319, IMPUGNADO: 12, RECURRIDO: 4, COMANDO: 12, POSITIVO: 33250 },
+])("rejects incomplete, unsafe or mixed non-positive totals", async (totals) => {
+  mocks.rpc.mockResolvedValue({ data: { ...payload(), non_positive: { status: "available", totals } }, error: null });
+  await expect(loadOfficialInternalLists(selection)).resolves.toEqual({ status: "malformed" });
+});
 it("loads exact section internas through verified workspace RPC", async () => {
   const result = await loadOfficialInternalLists(selection);
   expect(result.status).toBe("ok");

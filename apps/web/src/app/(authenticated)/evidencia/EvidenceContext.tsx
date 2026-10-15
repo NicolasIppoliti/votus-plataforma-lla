@@ -32,6 +32,7 @@ export function EvidenceContext({ fields, children }: { fields: EvidenceField[];
           <option value="">Seleccionar</option>
           {field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
+        {field.value && <span className="selected-value" aria-hidden="true">{field.options.find(option => option.value === field.value)?.label}</span>}
       </div>)}
       <div className={styles.field}><span>Origen</span><strong>Oficial · autorizado</strong></div>
       <noscript><button type="submit">Consultar evidencia</button></noscript>
