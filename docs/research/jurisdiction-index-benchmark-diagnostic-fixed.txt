@@ -1,0 +1,4 @@
+BENCHMARK BLOCKER: schema clone CalledProcessError exit 1 known diagnostics [] sqlstates []
+OWNED DIAGNOSTIC CLEANUP: database and role absence confirmed by harness
+.
+1 passed in 0.97s

@@ -1,0 +1,7 @@
+SCHEMA ERROR SHAPE: schema <quoted> does not exist
+MISSING SCHEMA IDENTIFIER: workspace_private
+FAILING SCHEMA COMMAND KIND: DROP POLICY IF EXISTS 
+BENCHMARK BLOCKER: schema clone CalledProcessError tool pg_restore exit 1 known diagnostics [] sqlstates []
+OWNED DIAGNOSTIC CLEANUP: database and role absence confirmed by harness
+.
+1 passed in 0.27s
