@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
+import { withPanoramaResults } from "./panorama-result-fixture";
 
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
@@ -42,7 +43,7 @@ test("electoral context stays labelled and readable at 320px with explicit sourc
 });
 
 test("Panorama updates its figures when the shared category changes, keeping Rosales", async ({ page }) => {
-  await withReviewItem(page, async () => {
+  await withPanoramaResults(async () => withReviewItem(page, async () => {
     await page.goto("/");
     const election = page.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true });
     await expect(election).toBeEnabled();
@@ -85,7 +86,7 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
     await page.reload();
     await expect(total).toBeVisible();
     await expect(total).not.toHaveText(before!);
-  });
+  }));
 });
 
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
