@@ -153,8 +153,8 @@ def test_load_result_rows_copies_all_eleven_fields_without_committing() -> None:
         == 1
     )
 
-    query, rows = conn.statements[-1]
-    assert "copy result_row" in query.lower()
+    query, rows = next((q, r) for q, r in conn.statements if "from stdin" in q.lower())
+    assert "copy pg_temp." in query.lower()
     assert "from stdin" in query.lower()
     assert rows == [
         (
@@ -272,11 +272,14 @@ def test_load_result_rows_matching_archive_entry_keeps_delete_insert_idempotency
         == 1
     )
 
-    assert conn.statements == first_statements * 2
+    assert len(conn.statements) == len(first_statements) * 2
+    assert conn.statements[:2] == conn.statements[len(first_statements) :][:2]
     assert "select source_kind" in first_statements[0][0]
     assert "from archive_entry" in first_statements[0][0]
     assert "delete from result_row" in first_statements[1][0]
-    assert "copy result_row" in first_statements[2][0]
+    assert "create temp table" in first_statements[2][0]
+    assert "copy pg_temp." in first_statements[4][0]
+    assert "insert into result_row" in first_statements[5][0]
     assert conn.commit_calls == 0
 
 
@@ -319,6 +322,51 @@ def _require_ephemeral_postgres() -> psycopg.Connection:
         return psycopg.connect(TEST_DSN, connect_timeout=2)
     except psycopg.OperationalError as exc:
         pytest.skip(unreachable_reason(TEST_DSN, exc))
+
+
+def test_load_result_rows_with_rls_and_no_bypass(pg_conn) -> None:
+    """FORCE RLS subjects the ordinary CI role to its own table's policies."""
+    with pg_conn.cursor() as cur:
+        cur.execute("select rolsuper or rolbypassrls from pg_roles where rolname = current_user")
+        if cur.fetchone()[0]:
+            pytest.skip("RLS regression requires an ordinary role without SUPERUSER or BYPASSRLS")
+        cur.execute("create temp table archive_entry (id text, source_kind text)")
+        cur.execute("insert into archive_entry values ('entry-1', 'official')")
+        cur.execute("""create temp table result_row (
+            election_id text, jurisdiction_id text, category_id text, granularity text,
+            requested_granularity text, list_id text, votes integer check (votes >= 0),
+            source_kind text, archive_entry_id text, source_row_index integer, mesa_tipo text
+        )""")
+        cur.execute("alter table result_row enable row level security")
+        cur.execute("alter table result_row force row level security")
+        cur.execute("create policy writer on result_row using (true) with check (votes < 100)")
+        cur.execute("select row_security_active('result_row'::regclass)")
+        assert cur.fetchone() == (True,)
+        cur.execute("select has_database_privilege(current_user, current_database(), 'TEMP')")
+        assert cur.fetchone() == (True,)
+    # Prove this role/table actually reproduces the original COPY failure.
+    # The savepoint keeps that expected failure from aborting the loader test.
+    with pytest.raises(psycopg.errors.FeatureNotSupported), pg_conn.transaction():
+        with pg_conn.cursor() as cur, cur.copy("copy result_row (votes) from stdin") as copy:
+            copy.write_row((12,))
+    record = _result_record(archive_entry_id="entry-1")
+    for _ in range(2):
+        assert (
+            load_result_rows(
+                pg_conn, archive_entry_id="entry-1", election_id="election-1", records=[record]
+            )
+            == 1
+        )
+    with pg_conn.cursor() as cur:
+        cur.execute("select votes, mesa_tipo from result_row")
+        assert cur.fetchall() == [(12, None)]
+    with pytest.raises(psycopg.errors.InsufficientPrivilege), pg_conn.transaction():
+        load_result_rows(
+            pg_conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[replace(record, votes=101)],
+        )
 
 
 @pytest.fixture
@@ -1374,9 +1422,9 @@ def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connect
     # 2 * distinct_mesa_count = 100 round trips just for jurisdiction
     # resolution. A batched resolution issues a small, fixed number of
     # round trips (election, category, jurisdiction-resolve,
-    # jurisdiction-insert, result_row delete, result_row insert) that does
-    # not grow with the number of distinct mesas.
-    assert counting_conn.counter["count"] < 10, (
+    # jurisdiction-insert, result_row delete, staging create/truncate/COPY,
+    # result_row INSERT SELECT) that does not grow with distinct mesas.
+    assert counting_conn.counter["count"] <= 11, (
         f"expected a small, bounded number of round trips, got "
         f"{counting_conn.counter['count']} for {distinct_mesa_count} distinct mesas "
         "-- looks like a per-row SELECT-then-INSERT pattern is still present"

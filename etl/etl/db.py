@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from types import TracebackType
 from typing import Literal, LiteralString, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from psycopg import sql
 
@@ -952,6 +953,10 @@ class ResultRowsReplacement:
     election_id: str
     source_kind: str | None
     inserted: int = 0
+    _staging_table: str = dataclass_field(
+        default_factory=lambda: "result_rows_" + uuid4().hex, init=False
+    )
+    _staging_created: bool = dataclass_field(default=False, init=False)
 
     @timed("result_writes")
     def insert(self, records: Sequence[ResultRowRecord]) -> int:
@@ -964,10 +969,22 @@ class ResultRowsReplacement:
         )
         if not records:
             return 0
+        # The name is generated internally from a UUID, never from source data.
+        staging = f"pg_temp.{self._staging_table}"
+        columns = """election_id, jurisdiction_id, category_id, granularity,
+            requested_granularity, list_id, votes, source_kind,
+            archive_entry_id, source_row_index, mesa_tipo"""
         with self.conn.cursor() as cur:
+            if not self._staging_created:
+                cur.execute(
+                    f"create temp table {self._staging_table} on commit drop as "
+                    f"select {columns} from result_row with no data"
+                )
+                self._staging_created = True
+            cur.execute(f"truncate table {staging}")
             with cur.copy(
-                """
-                copy result_row (
+                f"""
+                copy {staging} (
                     election_id, jurisdiction_id, category_id, granularity,
                     requested_granularity,
                     list_id, votes, source_kind,
@@ -991,6 +1008,8 @@ class ResultRowsReplacement:
                             record.mesa_tipo,
                         )
                     )
+            # INSERT, not COPY, must cross the target's RLS/constraint boundary.
+            cur.execute(f"insert into result_row ({columns}) select {columns} from {staging}")
         self.inserted += len(records)
         return len(records)
 
