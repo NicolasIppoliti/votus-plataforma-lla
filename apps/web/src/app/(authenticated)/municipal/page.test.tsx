@@ -391,6 +391,18 @@ describe("municipal page — the real entry point", () => {
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
   });
 
+  it("renders configured Rosales results at the unparameterized first-run Municipal destination (#467)", async () => {
+    const { default: Page } = await import("./page");
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+    expect(html).toContain("Coronel Rosales");
+    expect(html).toContain("Distrito 02 · Sección 027");
+    expect(html).toContain("Resultados exactos");
+    expect(html).toContain("4.200");
+    expect(html).toContain("ALIANZA LA LIBERTAD AVANZA");
+    expect(loadMunicipalOfficialEvidence).toHaveBeenCalledWith();
+  });
+
   it("test_authorized_denial_wins_even_when_the_legacy_repository_has_rows", async () => {
     const { default: MunicipalPage } = await import("./page");
     entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];

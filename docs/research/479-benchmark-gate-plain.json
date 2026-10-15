@@ -1,0 +1,26 @@
+{
+  "kind": "etl_ordinary_gate_observation",
+  "status": "passed",
+  "code_revision": "6554344",
+  "container": "votus-etl-bench",
+  "maintenance_url": "postgresql://postgres@127.0.0.1:55432/template1",
+  "postgresql_version": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "python_version": "3.13.12",
+  "psycopg_version": "3.3.6",
+  "migrations": 74,
+  "executed": 2072,
+  "skipped": 0,
+  "exit_code": 0,
+  "partitions": [
+    {"passed": 2048, "deselected": 24, "elapsed_seconds": 43.79, "warnings": 1},
+    {"passed": 24, "deselected": 2048, "elapsed_seconds": 4.38}
+  ],
+  "disk_before_gate_gib_displayed": 3.7,
+  "disk_final_gib_displayed": 3.6,
+  "disk_reserve_gib": 1.5,
+  "disposable_databases_remaining_at_final_check": 0,
+  "benchmark_first_loads_completed": 0,
+  "benchmark_reloads_completed": 0,
+  "benchmark_blocker": "Schema preparation: Supabase schema restore into plain PostgreSQL failed with preexisting public schema and missing service_role/supabase_admin roles. No ingestion reached.",
+  "container_cleanup_owner": "parent"
+}
