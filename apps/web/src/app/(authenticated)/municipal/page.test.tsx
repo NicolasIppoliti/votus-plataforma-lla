@@ -48,6 +48,11 @@ describe("municipal page — loadMunicipalView", () => {
 
     const html = renderToStaticMarkup(renderMunicipalView(view));
     expect(html).toContain("ALIANZA LA LIBERTAD AVANZA");
+    expect(html).toContain("Coronel Rosales · Buenos Aires");
+    expect(html).toMatch(/<details><summary>Códigos administrativos<\/summary>[\s\S]*?Distrito 02 · Sección 027[\s\S]*?<\/details>/);
+    for (const heading of html.matchAll(/<(?:h[1-6]|header)\b[^>]*>([\s\S]*?)<\/(?:h[1-6]|header)>/g)) {
+      expect(heading[1]).not.toMatch(/02\/027|Distrito 02|Sección 027/);
+    }
   });
 });
 
@@ -253,6 +258,11 @@ describe("municipal page — the real entry point", () => {
     vi.mocked(readFile).mockClear();
     const { default: Page } = await import("./page");
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+    expect(html).toContain("Coronel Rosales · Buenos Aires");
+    expect(html).toMatch(/<details><summary>Códigos administrativos<\/summary>[\s\S]*?Distrito 02 · Sección 027[\s\S]*?<\/details>/);
+    for (const heading of html.matchAll(/<header\b[^>]*>([\s\S]*?)<\/header>/g)) {
+      expect(heading[1]).not.toMatch(/02\/027|Distrito 02|Sección 027/);
+    }
     const paths = vi.mocked(readFile).mock.calls.map(([path]) => String(path));
     expect(paths.some((path) => /cne-rosales-section\.[a-f0-9]{64}\.json$/.test(path))).toBe(true);
     expect(paths.some((path) => path.includes("archive/") || path.endsWith("archive-manifest.json"))).toBe(false);
@@ -989,7 +999,7 @@ describe("municipal page — truthful identified-party distribution", () => {
     expect(html).toContain("Por tipo de fuente: 1 fila oficial / 2 votos");
     expect(html).toContain("1 fila fiscalización / 9 votos");
     expect(html).not.toContain(" %");
-    const details = html.slice(html.indexOf("<details"));
+    const details = [...html.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)].map(match => match[0]).join("");
     expect(details).not.toContain("unmapped");
     expect(details).not.toContain("fiscalización");
   });
@@ -1000,7 +1010,7 @@ describe("municipal page — truthful identified-party distribution", () => {
       sourceAudit: { official: { rows: 1, votes: 1 } }, partyMappingConfigured: true,
     }, [{ archiveEntryId: "synthetic-source", sha256: "", fetchedAt: "2026-01-01", status: "unavailable" }]));
     expect(html).toContain("<summary>Archivo y procedencia</summary>");
-    const visible = html.slice(0, html.indexOf("<details"));
+    const visible = html.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, "");
     expect(visible).toContain("sin hash");
     expect(visible).toContain("estado: unavailable");
   });
