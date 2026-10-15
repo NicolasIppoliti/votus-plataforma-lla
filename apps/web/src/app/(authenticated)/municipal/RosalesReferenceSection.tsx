@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Alert } from "@/components/ui/alert";
 import { Legend, REFERENCE_STYLE, DOT_COLOR } from "@/components/maps/reference-colors";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
@@ -25,7 +26,7 @@ const REFUSALS: Record<RosalesReferenceRefusal, string> = {
 export function RosalesReferenceSection({ result }: { result: RosalesReferenceResult }): ReactNode {
   return <section className={styles.reference} aria-labelledby={HEADING_ID}>
     <h2 id={HEADING_ID}>Circuitos y locales de votación (referencia CNE 2025)</h2>
-    {result.ok ? <RosalesReference reference={result.reference} /> : <p role="alert">No se muestra la referencia CNE: {REFUSALS[result.reason]}</p>}
+    {result.ok ? <RosalesReference reference={result.reference} /> : <Alert variant="unavailable">No se muestra la referencia CNE: {REFUSALS[result.reason]}</Alert>}
   </section>;
 }
 

@@ -1,6 +1,7 @@
 "use client";
 import { useId, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { WorkspaceSelection } from "@/lib/workspace/selection";
 
@@ -47,10 +48,10 @@ export function WorkspaceSelector({ initialSelection, onSwitchStart }: Workspace
       } catch { setMessage(messages["unavailable"] ?? ""); }
     });
   }
-  if (initialSelection.status === "unavailable") return <p role="status">No se pudo cargar la organización.</p>;
-  if (["revoked", "expired", "mismatch"].includes(initialSelection.status)) return <p role="status">{messages[initialSelection.status]}</p>;
-  if (initialSelection.total === 0) return <div>{message ? <p role="status">{message}</p> : null}<p role="status">No hay organizaciones disponibles.</p></div>;
-  if (initialSelection.organizations.length === 0) return <p role="status">No se pudo cargar la lista parcial de organizaciones.</p>;
+  if (initialSelection.status === "unavailable") return <Alert presentation="inline" variant="caveat">No se pudo cargar la organización.</Alert>;
+  if (["revoked", "expired", "mismatch"].includes(initialSelection.status)) return <Alert presentation="inline" variant="caveat">{messages[initialSelection.status]}</Alert>;
+  if (initialSelection.total === 0) return <div>{message ? <Alert presentation="inline" variant="needs-selection">{message}</Alert> : null}<Alert presentation="inline" variant="empty">No hay organizaciones disponibles.</Alert></div>;
+  if (initialSelection.organizations.length === 0) return <Alert presentation="inline" variant="caveat">No se pudo cargar la lista parcial de organizaciones.</Alert>;
   return <form onSubmit={submit}>
     <label htmlFor={organizationId}>Organización</label>{" "}
     <select id={organizationId} value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
@@ -58,7 +59,7 @@ export function WorkspaceSelector({ initialSelection, onSwitchStart }: Workspace
       {initialSelection.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
     </select>{" "}
     <Button variant="outline" type="submit" disabled={pending || !selected}>{pending ? "Cambiando…" : "Cambiar organización"}</Button>
-    {message ? <p role="status">{message}</p> : null}
+    {message ? <Alert presentation="inline" variant="needs-selection">{message}</Alert> : null}
     {initialSelection.truncated && initialSelection.total !== null ? <p role="note">La lista está limitada a las primeras 100 de {initialSelection.total} organizaciones autorizadas; la organización activa puede aparecer adicionalmente.</p> : null}
   </form>;
 }
