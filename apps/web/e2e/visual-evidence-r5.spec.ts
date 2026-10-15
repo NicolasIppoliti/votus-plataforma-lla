@@ -152,9 +152,11 @@ async function selectedOfficial(page: Page, route: string, captureSelected: () =
       await expect(panel).toBeVisible();
       // Both sides share one control group; activating it loads both maps.
       await panel.locator("[data-map-controls] > summary").click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
       await panel.getByRole("button", { name: "Mostrar mapa interactivo" }).click();
-      for (const [index, name] of ["Lado A — 2023 generales", "Lado B — 2025 legislativas"].entries()) {
-        await expect(signal(page, `${name}-ready`, panel.getByRole("status").nth(index))).toContainText("Mapa de", { timeout: 15000 });
+      for (const name of ["Lado A — 2023 generales", "Lado B — 2025 legislativas"]) {
+        const side = name.split(" — ")[0];
+        await expect(signal(page, `${name}-ready`, panel.getByRole("status").filter({ hasText: `${side}:` }))).toContainText("Mapa de", { timeout: 15000 });
         await expect(signal(page, `${name}-canvas`, panel.getByRole("article", { name }).locator("canvas.maplibregl-canvas"))).toBeVisible();
       }
       await panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).first().click();
