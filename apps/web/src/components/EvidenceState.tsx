@@ -21,7 +21,7 @@ interface EvidenceStateProps {
 
 export function EvidenceState({ state, title, titleId, eyebrow, children, action }: EvidenceStateProps) {
   const { treatment } = STATES[state];
-  const variant: AlertVariant = state === "denied" || state === "empty" ? state : state === "loading" ? "needs-selection" : "unavailable";
+  const variant: AlertVariant = state === "error" || state === "denied" || state === "empty" ? state : state === "loading" ? "needs-selection" : "unavailable";
   return (
     <Alert
       className="evidence-state"

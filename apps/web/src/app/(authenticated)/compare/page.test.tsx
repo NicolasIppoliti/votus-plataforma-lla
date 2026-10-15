@@ -397,7 +397,7 @@ describe("authorized comparison page", () => {
   ] as const)("names the %s refusal without exposing either side", async (status, title) => {
     mocks.evidence.mockResolvedValue({ status });
     const markup = await render(PARAMS);
-    expect(markup).toContain(`data-variant="${status === "authorization_denied" ? "denied" : "unavailable"}"`);
+    expect(markup).toContain(`data-variant="${status === "authorization_denied" ? "denied" : status === "malformed" ? "error" : "unavailable"}"`);
     expect(markup).toMatch(/role="alert" aria-labelledby="compare-evidence-state-heading"/);
     expect(markup).toContain(`<h2 id="compare-evidence-state-heading">${title}</h2>`);
     expect(markup).not.toMatch(/<table|PARTIDO A|official\/archive|puntos porcentuales|Referencia oficial|Procedencia oficial|Opciones no compartidas/);

@@ -1444,6 +1444,22 @@ select option {
   background: var(--warning-surface);
 }
 
+/* Load failures retain the operational danger top rule, not warning amber. */
+.workspace-alert[data-variant="error"] {
+  border-block-start: 3px solid var(--danger);
+}
+
+/* Header announcements share semantics without introducing a padded page box. */
+.workspace-alert.workspace-alert--inline {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-ink);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
 .workspace-alert__action {
   display: flex;
   flex-wrap: wrap;
