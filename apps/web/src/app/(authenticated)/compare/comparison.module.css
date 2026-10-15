@@ -178,7 +178,7 @@
 .fullValues dt { color: var(--secondary-ink); }
 .fullValues dd { margin: 4px 0 0; }
 
-/* Compact mobile comparison: paired controls with full values in a disclosure. */
+/* Compact comparison controls; full selected values use the shared responsive helper. */
 @media (max-width: 760px) {
   .root :global(.official-compare__layout) { gap: 12px; }
   .root :global(.official-compare__selector-grid) { gap: 12px; }
@@ -201,5 +201,15 @@
   .selectionNotes { margin-block: 4px; }
   .pairedFigures { margin-top: 12px; gap: 8px; }
   .coverage { padding-block: 8px; }
+}
+
+/* Native selected text and its arrow need the entire phone-width field. */
+@media (max-width: 480px) {
+  .root :global(.official-compare__selector-grid) { grid-template-columns: minmax(0,1fr); }
+  .root :global(.official-compare__selector-grid) fieldset { grid-template-columns: minmax(0,1fr); }
+  .root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-template-columns: minmax(0,1fr); }
+  .sharedRow { grid-template-columns: minmax(0,1fr); }
+  .root :global(.official-compare__selection) :global(.responsive-select) { width: 100%; min-width: 0; }
+  .root :global(.official-compare__selection) select { width: 100%; min-width: 0; }
 }
 
