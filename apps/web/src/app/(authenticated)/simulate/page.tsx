@@ -366,7 +366,7 @@ export default async function SimulatePage({
   const scenarioId = stringParam(params, "scenario");
   if (scenarioId) {
     if (requestQuery.has("input") || requestQuery.has("baseInput") || requestQuery.has("officialBase")) {
-      return <main><h1>Simulación de escenarios</h1><Alert role="alert">El escenario no se puede combinar con otros datos aportados.</Alert></main>;
+      return <main><h1>Simulación de escenarios</h1><Alert variant="denied">El escenario no se puede combinar con otros datos aportados.</Alert></main>;
     } else {
       scenarioProvenance = await loadScenarioSimulation(scenarioId);
       if (scenarioProvenance) {
@@ -533,7 +533,7 @@ export default async function SimulatePage({
         <p>Escenario: {scenarioProvenance.name}. Proyección 2027 · supuestos sin validar; no es un resultado oficial. Las bancas se calculan desde estos votos con el asignador de Simulación.</p>
         {scenarioProvenance.apportioned ? <p>Votos enteros obtenidos por redondeo de las proporciones del escenario mediante mayores restos sobre 32.291 votos. Diferencia máxima por lista: {scenarioProvenance.maxDifference.toFixed(6)} votos.</p> : <p>Votos enteros exactos recuperados de las proporciones del archivo sobre 32.291 votos.</p>}
       </section> : null}
-      {scenarioError ? <Alert role="alert">{scenarioError}</Alert> : null}
+      {scenarioError ? <Alert variant="unavailable">{scenarioError}</Alert> : null}
       <section aria-label="Cargar base oficial">
         <a href="/simulate?officialBase=2025">Cargar base oficial 2025 de Coronel Rosales</a>
         {officialBaseLoaded ? <p>Base oficial 2025 · JEBA definitivo · Concejales · argentinos y extranjeros. Positivos: 32.291; blancos: 2.150; total publicado: 34.441. Base del cociente Hare (sin blancos ni anulados): 32.291. Anulados no publicados: no se infieren como cero. El reparto usa Hare y 9 bancas por elección. Las transferencias posteriores son hipótesis, no resultados oficiales.</p> : null}
