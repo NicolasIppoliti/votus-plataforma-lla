@@ -1,5 +1,5 @@
 begin;
-select plan(25);
+select plan(29);
 select ok(to_regprocedure('workspace_api.official_internal_lists(uuid,uuid,text,text)') is not null,'authorized internal-list RPC exists');
 grant workspace_admin_owner,workspace_context_owner to current_user;
 insert into public.election(id,year,round) values('55000000-0000-0000-0000-000000000001',2098,'paso');
@@ -47,11 +47,33 @@ select is((select p->>'status' from internal_payload),'ok','authorized list proj
 select is((select p->>'positive_total' from internal_payload),'37','positive total excludes fiscalizacion');
 select is((select p->'lists' from internal_payload),
  '[{"canonical_party_id":"internal-parent-a","display_name":"Parent A","list_id":"132-3007","source_name":"Internal A1","identity_status":"canonical","votes":12},{"canonical_party_id":"internal-parent-a","display_name":"Parent A","list_id":"132-3008","source_name":"Internal A2","identity_status":"canonical","votes":0},{"canonical_party_id":"internal-parent-b","display_name":"Parent B","list_id":"135-3016","source_name":"Internal B","identity_status":"canonical","votes":20},{"canonical_party_id":null,"display_name":null,"list_id":"999-9999","source_name":null,"identity_status":"unmapped","votes":5}]'::jsonb,'exact two-list parent, zero list, single-list parent and explicit unmapped list');
-select is((select p->'non_positive' from internal_payload),'{"status":"unavailable","reason":"not_persisted_by_national_ingestion"}'::jsonb,'non-positive kinds are unavailable, never measured empty or zero');
+select is((select p->'non_positive' from internal_payload),'{"status":"unavailable","reason":"not_reloaded"}'::jsonb,'non-positive kinds are unavailable until reloaded, never measured empty or zero');
 select ok((select p->>'source_kind'='official' and p->>'source_granularity'='mesa' and p->>'level'='seccion' and p->>'truncated'='false' and p::text not like '%sentinel%' and p::text not like '%987654%' from internal_payload),'official source and granularity are visible without sentinel leakage');
 select is(workspace_api.official_result('55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000002','98','998')->'parties',
  '[{"identity_status":"canonical","canonical_party_id":"internal-parent-b","display_name":"Parent B","list_id":null,"votes":20,"vote_share":"0.54054054054054054054"},{"identity_status":"canonical","canonical_party_id":"internal-parent-a","display_name":"Parent A","list_id":null,"votes":12,"vote_share":"0.32432432432432432432"},{"identity_status":"unmapped","canonical_party_id":null,"display_name":null,"list_id":"999-9999","votes":5,"vote_share":"0.13513513513513513514"}]'::jsonb,'existing official_result still aggregates by parent unchanged');
 reset role;
+savepoint measured_kinds;
+insert into public.result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index,vote_kind)
+ select '55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000003',
+ '55000000-0000-0000-0000-000000000002','mesa',null,votes,'official','national/2098-paso',n,kind
+ from (values ('EN BLANCO',2121,20),('NULO',319,21),('IMPUGNADO',12,22),('RECURRIDO',4,23),('COMANDO',12,24)) v(kind,votes,n);
+set local role authenticated;
+select is(workspace_api.official_internal_lists('55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000002','98','998')->'non_positive'->>'reason','not_reloaded','incomplete kind coverage across mesas is not presented as a section total');
+reset role;
+insert into public.result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index,vote_kind)
+ select '55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000009',
+ '55000000-0000-0000-0000-000000000002','mesa',null,0,'official','national/2098-paso',n,kind
+ from (values ('EN BLANCO',25),('NULO',26),('IMPUGNADO',27),('RECURRIDO',28),('COMANDO',29)) v(kind,n);
+set local role authenticated;
+select is(workspace_api.official_internal_lists('55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000002','98','998')->'non_positive',
+ '{"status":"available","totals":{"EN BLANCO":2121,"NULO":319,"IMPUGNADO":12,"RECURRIDO":4,"COMANDO":12}}'::jsonb,'real totals remain separate per kind');
+select is(workspace_api.official_internal_lists('55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000002','98','998')->>'positive_total','37','non-positive rows never inflate list positives');
+reset role;
+insert into public.result_row(election_id,jurisdiction_id,category_id,granularity,votes,archive_entry_id,source_row_index,vote_kind)
+ values('55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000003','55000000-0000-0000-0000-000000000002','mesa',1,'national/2098-competing',1,'NULO');
+set local role authenticated;
+select is(workspace_api.official_internal_lists('55000000-0000-0000-0000-000000000001','55000000-0000-0000-0000-000000000002','98','998')->'non_positive'->>'reason','conflicting_non_positive_identity','competing non-positive archives refuse rather than sum');
+rollback to savepoint measured_kinds;
 -- The full curated key prevents competing parents for one list identity.
 select throws_ok($query$insert into public.party_mapping(year,jurisdiction,category,list_id,canonical_party_id)
  values(2098,'national','INTERNAL LIST TEST','132-3007','internal-parent-b')$query$,

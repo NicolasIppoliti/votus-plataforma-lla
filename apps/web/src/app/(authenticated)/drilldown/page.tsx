@@ -12,7 +12,8 @@ import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
+import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING } from "./map-heading";
 import { TerritorialNavigator } from "./TerritorialNavigator";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";

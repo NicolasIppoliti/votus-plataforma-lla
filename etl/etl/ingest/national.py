@@ -9,13 +9,11 @@ status. Mesa ids are normalized to a canonical string form so the 2025
 results file's unpadded (`"1"`) and `localesDeVotacionyMesas.csv`'s
 zero-padded (`"00001"`) forms compare equal (SPIKE (c)).
 
-Only `votos_tipo == "POSITIVO"` rows with a real `agrupacion_id` become
-normalized list-vote rows — this is the "(mesa, list/agrupación, category)
-combination" the spec scenario asks for. EN BLANCO/NULO/IMPUGNADO/
-RECURRIDO rows (`agrupacion_id` empty or `"0"`) are out of this phase's
-scope and are skipped, not silently mis-attributed to a list -- and every
-such skip is COUNTED and reported per reason, in rows and in votes, because
-a plausible-sounding exclusion is how a destructive filter survives review.
+POSITIVO rows retain their list identity. EN BLANCO, NULO, IMPUGNADO,
+RECURRIDO and COMANDO are independent party-less evidence (empty or "0"
+party/list cells). Unknown kinds and invalid identities remain exclusions,
+reported per reason in rows and votes. PASO list-number requirements apply
+only to positive rows; no non-positive vote is attributed to a party.
 """
 
 from __future__ import annotations
@@ -106,13 +104,15 @@ class NationalRow:
     archive_entry_id: str
     source_row_index: int
     jurisdiction_names: JurisdictionNames = JurisdictionNames()
+    vote_kind: str = "POSITIVO"
     # NO `natural_key` field. It was `(archive_entry_id, mesa_id, agrupacion_id,
     # cargo_nombre, votos_tipo)` — a SECOND, weaker idea of the key that nothing
     # read: `mesa_id` is not unique in 2023 nor in 2025, so it collides across
     # distritos and secciones, and the real dedup below groups on the full
-    # `(distrito, seccion, circuito, mesa, category, list_id)` lineage while the
+    # `(distrito, seccion, circuito, mesa, category, list_id, vote_kind)` lineage while the
     # database's own constraint is
-    # `(archive_entry_id, election_id, jurisdiction_id, category_id, list_id, source_kind)`.
+    # `(archive_entry_id, election_id, jurisdiction_id, category_id,
+    #   list_id, source_kind, vote_kind)`.
     # Three ideas of one key, one of them wrong and unreachable.
 
     @property
@@ -395,7 +395,7 @@ def _report_exclusions(
     )
 
 
-NaturalKey = tuple[str, str | None, str | None, int | None, str, str | None]
+NaturalKey = tuple[str, str | None, str | None, int | None, str, str | None, str]
 
 
 @dataclass(slots=True)
@@ -436,13 +436,13 @@ def _candidate_from_raw(
     )
     agrupacion_id = (raw.get("agrupacion_id") or "").strip()
     votos_tipo = raw["votos_tipo"]
-    if votos_tipo != "POSITIVO":
+    if votos_tipo not in {"POSITIVO", "EN BLANCO", "NULO", "IMPUGNADO", "RECURRIDO", "COMANDO"}:
         exclude(f"votos_tipo={votos_tipo!r}", raw.get("votos_cantidad"))
         return None
-    if not agrupacion_id:
+    if votos_tipo == "POSITIVO" and not agrupacion_id:
         exclude("agrupacion_id empty", raw.get("votos_cantidad"))
         return None
-    if agrupacion_id == "0":
+    if votos_tipo == "POSITIVO" and agrupacion_id == "0":
         exclude('agrupacion_id "0"', raw.get("votos_cantidad"))
         return None
     # A not-counted mesa has no measured votes; storing its rows would present it as a
@@ -471,13 +471,27 @@ def _candidate_from_raw(
     election = (election_year, election_round)
     requires_empty = election in {(2023, "generales"), (2025, "legislativas")}
     requires_nonempty = election == (2023, "paso")
-    if (requires_empty and lista_numero) or (requires_nonempty and not lista_numero):
+    if votos_tipo == "POSITIVO" and (
+        (requires_empty and lista_numero) or (requires_nonempty and not lista_numero)
+    ):
         expected = "empty" if requires_empty else "nonempty"
         raise NationalSchemaError(
             f"{archive_entry_id}: election {election_year}/{election_round} source row "
             f"{index} requires lista_numero to be {expected}; received {lista_numero!r}"
         )
-    list_id = f"{agrupacion_id}-{lista_numero}" if lista_numero else agrupacion_id
+    if votos_tipo != "POSITIVO" and (
+        agrupacion_id not in {"", "0"} or lista_numero not in {"", "0"}
+    ):
+        exclude(
+            f"invalid party/list identity for votos_tipo={votos_tipo!r}",
+            raw.get("votos_cantidad"),
+        )
+        return None
+    list_id = (
+        (f"{agrupacion_id}-{lista_numero}" if lista_numero else agrupacion_id)
+        if votos_tipo == "POSITIVO"
+        else None
+    )
 
     mesa_id = _normalize_mesa_id(raw.get("mesa_id"))
     if mesa_id is None:
@@ -526,6 +540,7 @@ def _candidate_from_raw(
         ),
         archive_entry_id=archive_entry_id,
         source_row_index=index,
+        vote_kind=votos_tipo,
     )
 
 
@@ -537,6 +552,7 @@ def _natural_key(row: NationalRow) -> NaturalKey:
         row.result.mesa,
         row.category,
         row.list_id,
+        row.vote_kind,
     )
 
 
@@ -678,8 +694,8 @@ def build_national_completeness(
     mesas, all NATIVOS; `estado_final` is ESCRUTADO or NO ESCRUTADO and never
     mixed within one category and mesa). 2023 sources carry neither the
     catalogue nor `estado_final`, so their completeness stays unknown.
-    Statuses are read from every row, before ingestion keeps only POSITIVO
-    rows, so a mesa without a positive row is still counted or not counted.
+    Statuses are read from every row, before vote/identity validation, so a
+    mesa without a positive row is still counted or not counted.
     """
     if establecimientos_csv_bytes is None:
         return _unavailable_completeness("no expected mesa catalogue in source", report=False)
@@ -1184,6 +1200,7 @@ def _load_national_rows(
                     archive_entry_id=row.archive_entry_id,
                     source_row_index=row.source_row_index,
                     mesa_tipo=row.mesa_tipo,
+                    vote_kind=row.vote_kind,
                 )
             )
         replacement.insert(result_records)
