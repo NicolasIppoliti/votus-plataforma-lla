@@ -24,7 +24,10 @@ export function panoramaResultPlan() {
 
 /** Review authorization alone does not seed results. Categories are global catalog
  * entries: reuse existing names, and delete only catalog entries we inserted. */
-export async function withPanoramaResults<T>(run: () => Promise<T>, info?: Pick<TestInfo, "outputPath">): Promise<T> {
+export async function withPanoramaResults<T>(run: (fixture: {
+  election: { id: string; label: string };
+  categories: { id: string; name: string }[];
+}) => Promise<T>, info?: Pick<TestInfo, "outputPath">): Promise<T> {
   const environment = assertE2eEnvironment(process.env);
   const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
   const plan = panoramaResultPlan();
@@ -67,7 +70,10 @@ export async function withPanoramaResults<T>(run: () => Promise<T>, info?: Pick<
     step = "results-insert";
     check((await admin.from("result_row").insert(plan.rows)).error);
     step = "review-workspace-and-browser-journey";
-    outcome = { value: await run() };
+    outcome = { value: await run({
+      election: { id: plan.election.id, label: `${plan.election.year} ${plan.election.round}` },
+      categories: plan.categories,
+    }) };
   } catch (error) {
     outcome = { error };
     try { await recordFailure(error); } catch { /* Diagnostics must not prevent owned cleanup. */ }

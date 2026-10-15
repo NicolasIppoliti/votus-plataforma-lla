@@ -76,12 +76,12 @@ test("electoral context stays labelled and readable at 320px with explicit sourc
 });
 
 test("Panorama updates its figures when the shared category changes, keeping Rosales", async ({ page }) => {
-  await withPanoramaResults(async () => withReviewItem(page, async () => {
+  await withPanoramaResults(async (fixture) => withReviewItem(page, async () => {
     await page.goto("/");
     const election = page.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true });
     await expect(election).toBeEnabled();
-    const election2023 = await election.locator("option").evaluateAll(options => options.filter(option => option.textContent?.includes("2023") && !option.textContent?.toLowerCase().includes("paso")).map(option => (option as HTMLOptionElement).value));
-    if (election2023.length === 0) {
+    const seededElection = election.locator("option").filter({ hasText: fixture.election.label });
+    if (await seededElection.count() === 0) {
       const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
       await writeFile(test.info().outputPath("e2e-facts-panorama-election-options.json"), JSON.stringify({
         electionControlCount: await election.count(),
@@ -93,13 +93,12 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
         unavailableContextCount: await bar.getByText("No se pudo verificar el contexto autorizado.", { exact: true }).count(),
       }));
     }
-    expect(election2023.length).toBeGreaterThan(0);
-    await election.selectOption(election2023[0]!);
+    await expect(seededElection).toHaveAttribute("value", fixture.election.id);
+    await election.selectOption(fixture.election.id);
     const category = page.getByRole("combobox", { name: "Contexto electoral: Categoría", exact: true });
     await expect(category).toBeEnabled();
     await expect.poll(async () => category.locator("option[value]:not([value=''])").count()).toBeGreaterThan(1);
-    const categories = await category.locator("option[value]:not([value=''])").evaluateAll(options => ["PRESIDENTE Y VICE", "DIPUTADO NACIONAL"].map(name => (options.find(option => option.textContent === name) as HTMLOptionElement | undefined)?.value));
-    expect(categories.every(Boolean)).toBe(true);
+    const categories = fixture.categories.map(category => category.id);
     await category.selectOption(categories[0]!);
     await page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true }).selectOption("02");
     await page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true }).selectOption("027");
@@ -139,19 +138,19 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
       } catch { /* Diagnostics must not replace the original failure. */ }
       throw error;
     }
-    const before = await total.textContent();
+    await expect(total).toHaveText("11.111");
     await category.selectOption(categories[1]!);
     await expect(category).toHaveValue(categories[1]!);
     await expect(page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true })).toHaveValue("02");
     await expect(page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue("027");
     await expect(total).toBeVisible();
-    await expect(total).not.toHaveText(before!);
+    await expect(total).toHaveText("7.777");
     const exact = page.getByRole("link", { name: "Ver resultados exactos en Exploración" });
     await expect(exact).toHaveAttribute("href", new RegExp(`categoryId=${categories[1]}`));
     await expect(page.locator("#panorama-territory")).toHaveCount(0);
     await page.reload();
     await expect(total).toBeVisible();
-    await expect(total).not.toHaveText(before!);
+    await expect(total).toHaveText("7.777");
   }), test.info());
 });
 
