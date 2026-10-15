@@ -105,7 +105,40 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
     await page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true }).selectOption("027");
     const summary = page.getByRole("complementary", { name: "Lectura de la selección" });
     const total = summary.locator("dt", { hasText: "Votos positivos oficiales" }).locator("+ dd");
-    await expect(total).toBeVisible();
+    try {
+      await expect(total).toBeVisible();
+    } catch (error) {
+      // Capture only electoral context and public render state, never storage,
+      // credentials or the full page. Keep the original assertion as the failure.
+      try {
+        const facts = await page.evaluate(() => {
+          const keys = ["electionId", "categoryId", "distritoCode", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode", "sourceKind"];
+          const params = new URL(window.location.href).searchParams;
+          const bar = document.querySelector('[aria-label="Contexto electoral"]');
+          const summary = document.querySelector('aside[aria-labelledby="panorama-result-heading"]');
+          const alerts = Array.from(document.querySelectorAll('[role="alert"], [role="status"]'));
+          return {
+            pathname: window.location.pathname,
+            searchParams: Object.fromEntries(keys.map(key => [key, params.getAll(key)])),
+            selectedOptions: Array.from(bar?.querySelectorAll("select") ?? []).map(select => ({
+              label: select.getAttribute("aria-label"), value: select.value, disabled: select.disabled,
+            })),
+            regions: {
+              context: !!bar,
+              summary: !!summary,
+              officialTotal: !!summary && Array.from(summary.querySelectorAll("dt")).some(node => node.textContent === "Votos positivos oficiales"),
+              alertCount: alerts.filter(node => node.getAttribute("role") === "alert").length,
+              statusCount: alerts.filter(node => node.getAttribute("role") === "status").length,
+            },
+            // Summary alerts describe the evidence status (including malformed /
+            // unavailable); they contain no result rows or provenance payloads.
+            summaryAlerts: Array.from(summary?.querySelectorAll('[role="alert"], [role="status"]') ?? []).map(node => node.textContent),
+          };
+        });
+        await writeFile(test.info().outputPath("e2e-facts-panorama-summary.json"), JSON.stringify(facts));
+      } catch { /* Diagnostics must not replace the original failure. */ }
+      throw error;
+    }
     const before = await total.textContent();
     await category.selectOption(categories[1]!);
     await expect(category).toHaveValue(categories[1]!);
