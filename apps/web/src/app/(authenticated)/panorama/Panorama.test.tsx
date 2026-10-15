@@ -38,7 +38,7 @@ const data: PanoramaData = {
 };
 
 it("renders transient circuit emphasis without changing persistent selection (#446)", () => {
-  states.push("Coronel Rosales", "00248", "00249", null, "");
+  states.push("00248", "00249", null, "");
   const geometry = [...data.circuitGeometry!, { ...data.circuitGeometry![0]!, code: "00249" }];
   const html = renderToStaticMarkup(<Panorama data={{ ...data, circuitGeometry: geometry }} />);
   expect(html).toMatch(/stroke-width="3"[^>]*aria-pressed="false"[^>]*aria-label="Circuito 00249:/);
@@ -84,8 +84,7 @@ it("filters names locally while retaining all child rows and canonical links in 
   const cleared = renderToStaticMarkup(<PanoramaChildren data={data} />);
   expect(cleared).toContain("2 visibles · 2 circuitos disponibles");
   expect(cleared).not.toContain('<tr hidden="">');
-  states.push("Argentina");
-  const national = renderToStaticMarkup(<Panorama data={data} />);
+  const national = renderToStaticMarkup(<Panorama data={{ href: "/drilldown", exclusions: [], context: { sourceKind: "official" } }} />);
   expect(national).not.toContain("00249 — Sur");
   expect(national).not.toContain("220");
 });
@@ -177,11 +176,11 @@ it("filters and marks the selected circuit without changing its exact drilldown 
 });
 
 it("restores only a circuit present in the official Panorama outcomes (#445)", () => {
-  states.push("Coronel Rosales", "00248");
+  states.push("00248");
   const selected = renderToStaticMarkup(<Panorama data={data} />);
   expect(selected).toContain('aria-selected="true"');
   expect(selected).toContain("Circuito seleccionado: 00248");
-  states.push("Coronel Rosales", "unknown");
+  states.push("unknown");
   const invalid = renderToStaticMarkup(<Panorama data={data} />);
   expect(invalid).not.toContain('aria-selected="true"');
   expect(invalid).toContain("2 visibles · 2 circuitos disponibles");
@@ -225,7 +224,7 @@ it("renders the shared circuit encoding from the table outcomes on the real Pano
   expect(html).not.toContain('<details open');
   const presentation = circuitPresentation(circuits[0]!);
   expect(html).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
-  states.push("Coronel Rosales", "00248");
+  states.push("00248");
   const selected = renderToStaticMarkup(<Panorama data={mapped} />);
   expect(selected).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
   expect(selected).toContain('data-hatched="true"');
