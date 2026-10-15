@@ -98,6 +98,14 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await draft("Elección", "electionId", COVERAGE_SCOPE.electionId, "Categoría");
       await draft("Categoría", "categoryId", COVERAGE_SCOPE.categoryId, "Distrito");
       await draft("Distrito", "distritoCode", COVERAGE_SCOPE.distritoCode, "Sección");
+      const sectionHelp = page.getByRole("button", { name: "Qué significa sección", exact: true });
+      await sectionHelp.focus();
+      const sectionTooltip = page.locator(`[id="${await sectionHelp.getAttribute("aria-describedby")}"]`);
+      await expect(sectionTooltip).toBeVisible();
+      await expect(sectionHelp).toHaveAccessibleDescription(/En Buenos Aires corresponde a un partido/);
+      await page.keyboard.press("Escape");
+      await expect(sectionTooltip).toBeHidden();
+      await expect(sectionHelp).toBeFocused();
       await page.getByLabel("Sección", { exact: true }).focus();
       await page.getByLabel("Sección", { exact: true }).selectOption(COVERAGE_SCOPE.seccionCode);
       const expectedUrl = new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL).toString();

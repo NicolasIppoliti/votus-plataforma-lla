@@ -549,9 +549,23 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await expect(page.locator("#navigator-title")).toBeFocused();
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
+      const checkGlossary = async (term: string) => {
+        const help = page.getByRole("button", { name: `Qué significa ${term}`, exact: true });
+        await help.focus();
+        const tooltip = page.locator(`[id="${await help.getAttribute("aria-describedby")}"]`);
+        await expect(tooltip).toBeVisible();
+        await expect(help).toHaveAccessibleDescription(/.+/);
+        await page.keyboard.press("Escape");
+        await expect(tooltip).toBeHidden();
+        await expect(help).toBeFocused();
+      };
+      await checkGlossary("sección");
+      await checkGlossary("circuito");
       const traversalUrls = [page.url()];
       await openChild("00001", "circuito"); traversalUrls.push(page.url());
+      await checkGlossary("establecimiento");
       await openChild("E1 — Synthetic school", "establecimiento"); traversalUrls.push(page.url());
+      await checkGlossary("mesa");
       await openChild("Mesa 1", "mesa"); traversalUrls.push(page.url());
       await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
       // Real browser history must restore both exact lineage and served evidence.
