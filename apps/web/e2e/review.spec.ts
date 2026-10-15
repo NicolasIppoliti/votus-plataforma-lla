@@ -837,8 +837,8 @@ test.describe("the review route reflects the disposable database", () => {
       );
     });
 
-    // Layout/touch checks may move the page; prove denial at the review destination,
-    // not whichever sidebar link happens to be last in the redesigned navigation.
+    // Cleanup deletes the fixture workspace context and organization. Prove the
+    // resulting selection-required state at /review, not a downstream queue denial.
     const reviewLink = page.getByRole("navigation", { name: "principal", exact: true })
       .getByRole("link", { name: "Revisión de datos", exact: true });
     await expect(reviewLink).toHaveAttribute("href", "/review");
@@ -846,10 +846,13 @@ test.describe("the review route reflects the disposable database", () => {
     await expect(page).toHaveURL(/\/review$/);
     await page.reload();
     const main = page.getByRole("main");
-    await expect(main).toContainText("No se pudo autorizar la cola de revisión.");
-    await expect(main).toContainText(
-      "No se pudo autorizar la cola de revisión.",
-    );
+    await expect(main.getByRole("heading", { level: 1, name: "Cola de revisión", exact: true })).toBeVisible();
+    await expect(main.getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
+    const selection = main.getByRole("region", { name: "Selección de organización", exact: true });
+    await expect(selection).toBeVisible();
+    await expect(selection.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+    await expect(selection.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(0);
+    await expect(main.getByRole("alert")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);
     await expectDocumentNotToOverflow(page);
   });
