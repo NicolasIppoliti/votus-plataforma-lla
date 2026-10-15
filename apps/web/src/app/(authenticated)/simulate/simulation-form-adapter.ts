@@ -17,6 +17,7 @@ export interface SimulationFormValues {
   granularity: Granularity;
   seatsToFill: string;
   totalVotes: string;
+  validVotesOnly?: boolean;
   blankVotes: string;
   annulledVotes: string;
   padron: string;
@@ -192,7 +193,10 @@ export function simulationValuesFromQuery(query: string): SimulationFormValues |
       level: input.level,
       granularity: input.granularity,
       seatsToFill: String(input.seatsToFill),
-      totalVotes: input.totalVotes === undefined ? "" : String(input.totalVotes),
+      totalVotes: input.level !== "national" && input.voteTotals?.kind === "valid_votes_only"
+        ? String(input.voteTotals.validVotes)
+        : input.totalVotes === undefined ? "" : String(input.totalVotes),
+      ...(input.level !== "national" && input.voteTotals?.kind === "valid_votes_only" ? { validVotesOnly: true } : {}),
       blankVotes: input.level === "national" ? "0" : String(input.blankVotes ?? ""),
       annulledVotes: input.level === "national" ? "0" : String(input.annulledVotes ?? ""),
       padron: input.level === "national" ? String(input.padron) : "",
@@ -293,6 +297,12 @@ function parseLists(values: SimulationFormListValues[]) {
 }
 
 function parsePbaVoteTotals(values: SimulationFormValues) {
+  if (values.validVotesOnly) return {
+    voteTotals: {
+      kind: "valid_votes_only" as const,
+      validVotes: parseInteger(values.totalVotes, "Los votos válidos"),
+    },
+  };
   return {
     totalVotes: parseInteger(values.totalVotes, "El total de votos"),
     blankVotes: parseInteger(values.blankVotes, "Los votos en blanco"),
