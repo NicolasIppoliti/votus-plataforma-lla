@@ -13,11 +13,14 @@ const nextConfig: NextConfig = {
   // Trace above apps/web, but include globs remain relative to the Next.js project root.
   outputFileTracingRoot: resolve(import.meta.dirname, "../.."),
   outputFileTracingIncludes: {
-    // Section outline from the archive, plus the pinned Slice 11 artifact read by
-    // src/lib/geography/cne-rosales-reference.ts.
+    // Shared section derivative consumers; no request needs the full sections archive.
+    "/compare": ["./data/geography/cne-rosales-section.d21df6a0ca949d64fbe4a4aa83c6d88695333be06d38321de00c1241bfd7a351.json"],
+    "/drilldown": [
+      "./data/geography/cne-rosales-section.d21df6a0ca949d64fbe4a4aa83c6d88695333be06d38321de00c1241bfd7a351.json",
+      "./data/geography/cne-rosales-2025-reference.fee7cd013ecd6b646bb58683160b3b4e714e1b7394fc462070f3168cd3b24577.json",
+    ],
     "/municipal": [
-      "../../archive-manifest.json",
-      "../../archive/geography/cne-pba-sections.*.geojson",
+      "./data/geography/cne-rosales-section.d21df6a0ca949d64fbe4a4aa83c6d88695333be06d38321de00c1241bfd7a351.json",
       "./data/geography/cne-rosales-2025-reference.fee7cd013ecd6b646bb58683160b3b4e714e1b7394fc462070f3168cd3b24577.json",
     ],
     "/api/geography/buenos-aires": [
