@@ -122,18 +122,25 @@ const patterns = [
 	["etl-only", '["etl-release"]', "skipped", "success", "skipped", "skipped"],
 	["web-and-e2e", '["web-static","e2e-release"]', "success", "skipped", "success", "success"],
 ] as const;
-function verify(gates: string, results: string[]) {
+// Pull requests into the develop integration branch run static and ETL gates only;
+// develop pushes and pull requests into main keep the full release gates.
+const integrationPatterns = [
+	["all", '["web-static","etl-release"]', "success", "success", "skipped", "skipped"],
+	["etl-only", '["etl-release"]', "skipped", "success", "skipped", "skipped"],
+	["web-and-e2e", '["web-static"]', "success", "skipped", "skipped", "skipped"],
+] as const;
+function verify(gates: string, results: string[], baseRef = "") {
 	return spawnSync("bash", ["-euc", shellFor("Require all release gates")], {
 		encoding: "utf8",
 		env: {
-			NODE_ENV: "test", PATH: process.env.PATH, SCOPE_GATES: gates,
+			NODE_ENV: "test", PATH: process.env.PATH, SCOPE_GATES: gates, BASE_REF: baseRef,
 			SCOPE_RESULT: results[0], WEB_STATIC_RESULT: results[1],
 			ETL_RELEASE_RESULT: results[2], E2E_RELEASE_RESULT: results[3],
 			E2E_SQL_RESULT: results[4],
 		},
 	});
 }
-function publish(input: string, supabase: unknown = "2.116.0", python = "3.13.12\n") {
+function publish(input: string, supabase: unknown = "2.116.0", python = "3.13.12\n", baseRef = "") {
 	const directory = mkdtempSync(join(tmpdir(), "ci-scope-output-"));
 	try {
 		mkdirSync(join(directory, "apps/web"), { recursive: true });
@@ -146,7 +153,7 @@ function publish(input: string, supabase: unknown = "2.116.0", python = "3.13.12
 			cwd: directory,
 			env: {
 				NODE_ENV: "test", PATH: process.env.PATH,
-				SCOPE_JSON: input, GITHUB_OUTPUT: outputPath,
+				SCOPE_JSON: input, GITHUB_OUTPUT: outputPath, BASE_REF: baseRef,
 			},
 		});
 		const output = readFileSync(outputPath, "utf8");
@@ -156,6 +163,39 @@ function publish(input: string, supabase: unknown = "2.116.0", python = "3.13.12
 	}
 }
 describe("workflow scope boundaries", () => {
+	it.each(integrationPatterns)("publishes %s without browser gates for pull requests into develop", (decision, gates) => {
+		const full = patterns.find(([name]) => name === decision)![1];
+		const result = publish(JSON.stringify({ schemaVersion: 1, decision, gates: JSON.parse(full) }), "2.116.0", "3.13.12\n", "develop");
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.publishedOutput).toBe(`gates=${gates}\n`);
+		expect(result.stdout).toBe("");
+	});
+	it.each(patterns)("keeps full %s gates for pull requests into main", (decision, gates) => {
+		const result = publish(JSON.stringify({ schemaVersion: 1, decision, gates: JSON.parse(gates) }), "2.116.0", "3.13.12\n", "main");
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.publishedOutput).toBe(`gates=${gates}\n`);
+	});
+	it.each(integrationPatterns)("accepts only the exact %s integration result pattern", (_decision, gates, ...results) => {
+		expect(verify(gates, ["success", ...results], "develop").status).toBe(0);
+		for (let index = 0; index < 5; index++) {
+			for (const result of ["", "success", "skipped", "failure", "cancelled", "unknown"]) {
+				const altered = ["success", ...results];
+				if (altered[index] === result) continue;
+				altered[index] = result;
+				expect(verify(gates, altered, "develop").status, `${index}: ${result}`).not.toBe(0);
+			}
+		}
+	});
+	it.each(patterns.filter(([, gates]) => gates.includes("e2e-release")))(
+		"rejects full %s gates on a pull request into develop", (_decision, gates, ...results) => {
+			expect(verify(gates, ["success", ...results], "develop").status).not.toBe(0);
+		},
+	);
+	it.each(integrationPatterns.filter(([decision]) => decision !== "etl-only"))(
+		"rejects reduced %s gates outside the develop integration branch", (_decision, gates, ...results) => {
+			for (const baseRef of ["", "main"]) expect(verify(gates, ["success", ...results], baseRef).status).not.toBe(0);
+		},
+	);
 	it("publishes shared toolchain versions from repository declarations", () => {
 		const result = publish(JSON.stringify({ schemaVersion: 1, decision: "all", gates: ALL_GATES }));
 		expect(result.status, result.stderr).toBe(0);

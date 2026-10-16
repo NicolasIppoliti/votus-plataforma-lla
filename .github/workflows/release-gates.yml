@@ -2,7 +2,13 @@ name: Release gates
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, develop]
+# A newer commit supersedes an in-flight run on the same pull request or on
+# develop. Each main commit gets its own group, so a main run is never
+# cancelled nor replaced while pending, and every main commit keeps its verdict.
+concurrency:
+  group: release-gates-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
 env:
@@ -48,6 +54,7 @@ jobs:
         shell: bash
         env:
           SCOPE_JSON: ${{ steps.classify.outputs.json }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           node <<'NODE'
           const { appendFileSync, readFileSync } = require('node:fs');
@@ -57,11 +64,16 @@ jobs:
             ['etl-only', ['etl-release']],
             ['web-and-e2e', ['web-static', 'e2e-release']],
           ]);
-          const gates = choices.get(scope?.decision);
-          if (scope?.schemaVersion !== 1 || !gates ||
-              JSON.stringify(scope.gates) !== JSON.stringify(gates)) {
+          const fullGates = choices.get(scope?.decision);
+          if (scope?.schemaVersion !== 1 || !fullGates ||
+              JSON.stringify(scope.gates) !== JSON.stringify(fullGates)) {
             throw new Error('Invalid scope contract');
           }
+          // Pull requests into the develop integration branch skip the browser
+          // and SQL release lanes; develop pushes and PRs into main run them.
+          const gates = process.env.BASE_REF === 'develop'
+            ? fullGates.filter(gate => gate !== 'e2e-release')
+            : fullGates;
           const supabase = JSON.parse(readFileSync('apps/web/package.json', 'utf8')).devDependencies?.supabase;
           const python = readFileSync('.python-version', 'utf8').trim();
           if ([supabase, python].some(value => typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value))) {
@@ -286,20 +298,33 @@ jobs:
       ETL_RELEASE_RESULT: ${{ needs.etl-release.result }}
       E2E_RELEASE_RESULT: ${{ needs.e2e-release.result }}
       E2E_SQL_RESULT: ${{ needs.e2e-sql.result }}
+      BASE_REF: ${{ github.base_ref }}
     steps:
       - name: Require all release gates
         shell: bash
         run: |
           test "$SCOPE_RESULT" = "success"
-          case "$SCOPE_GATES" in
-            '["web-static","etl-release","e2e-release"]')
-              web=success; etl=success; e2e=success ;;
-            '["etl-release"]')
-              web=skipped; etl=success; e2e=skipped ;;
-            '["web-static","e2e-release"]')
-              web=success; etl=skipped; e2e=success ;;
-            *) echo "Invalid scope gates" >&2; exit 1 ;;
-          esac
+          if [ "$BASE_REF" = "develop" ]; then
+            case "$SCOPE_GATES" in
+              '["web-static","etl-release"]')
+                web=success; etl=success; e2e=skipped ;;
+              '["etl-release"]')
+                web=skipped; etl=success; e2e=skipped ;;
+              '["web-static"]')
+                web=success; etl=skipped; e2e=skipped ;;
+              *) echo "Invalid scope gates" >&2; exit 1 ;;
+            esac
+          else
+            case "$SCOPE_GATES" in
+              '["web-static","etl-release","e2e-release"]')
+                web=success; etl=success; e2e=success ;;
+              '["etl-release"]')
+                web=skipped; etl=success; e2e=skipped ;;
+              '["web-static","e2e-release"]')
+                web=success; etl=skipped; e2e=success ;;
+              *) echo "Invalid scope gates" >&2; exit 1 ;;
+            esac
+          fi
           test "$WEB_STATIC_RESULT" = "$web"
           test "$ETL_RELEASE_RESULT" = "$etl"
           test "$E2E_RELEASE_RESULT" = "$e2e"
