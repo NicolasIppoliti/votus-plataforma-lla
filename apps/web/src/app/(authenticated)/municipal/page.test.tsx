@@ -1,4 +1,6 @@
 import type { ReactElement } from "react";
+
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 import { readFile } from "node:fs/promises";
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();

@@ -5,6 +5,8 @@ import { CoverageChart } from "./CoverageChart";
 import { FiscalizacionSelectionForm, type CoverageField } from "./FiscalizacionSelectionForm";
 import { EvidenceState } from "@/components/EvidenceState";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { TableRegion } from "@/components/TableRegion";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -609,6 +611,8 @@ async function renderFiscalizacionPage(
 export default async function FiscalizacionPage({
   searchParams,
 }: FiscalizacionPageProps): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Fiscalización (no oficial)" />;
   const params = await searchParams;
   const rejected = Object.keys(params).filter((key) => !ALLOWED_QUERY_KEYS.has(key));
   if (rejected.length > 0) {

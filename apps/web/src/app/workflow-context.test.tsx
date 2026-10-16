@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import OperationalBriefingPage from "./(authenticated)/(home)/page";
 
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
+
 vi.mock("@/lib/workspace/official-facets", () => ({
   createAuthorizedOfficialFacetRepository: () => ({ facets: vi.fn().mockResolvedValue({ elections: [] }) }),
 }));

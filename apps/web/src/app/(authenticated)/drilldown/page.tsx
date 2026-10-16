@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext } from "@/lib/context/url";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
 import styles from "./drilldown.module.css";
@@ -506,7 +508,9 @@ function refusalPage(message: ReactNode): ReactNode {
   );
 }
 
-export default function DrilldownPage(props: DrilldownPageProps): Promise<ReactNode> {
+export default async function DrilldownPage(props: DrilldownPageProps): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Exploración territorial" />;
   return profileServerSpan("page.drilldown", () => renderDrilldownPage(props));
 }
 

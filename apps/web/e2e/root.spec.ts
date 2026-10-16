@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
+import { writeWorkspaceStateFacts } from "./workspace-state-facts";
 import { withPanoramaResults } from "./panorama-result-fixture";
 import { expectMobileFormGeometry } from "./mobile-form-geometry";
 
@@ -276,7 +277,7 @@ test("a real same-workspace POST hides both counts until an equal-valued RSC sna
     const attention = page.getByRole("complementary", { name: "Atención operativa" });
     const count = "1 elemento(s) de revisión pendiente(s)";
     for (const reader of [topbar, attention]) await expect(reader).toContainText(count);
-    const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+    const organization = topbar.getByRole("combobox", { name: "Organización", exact: true });
     const activeId = await organization.inputValue();
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
@@ -291,7 +292,7 @@ test("a real same-workspace POST hides both counts until an equal-valued RSC sna
     });
     const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
     try {
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await topbar.getByRole("button", { name: "Cambiar organización" }).click();
       await expect(organization).toBeDisabled();
       for (const reader of [topbar, attention]) {
         await expect(reader).toContainText("No se pudo verificar el estado de revisión.");
@@ -330,14 +331,14 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       const topbar = page.locator("header.workspace-topbar");
       const sidebar = topbar.locator(".workspace-topbar__controls");
       const attention = page.getByRole("complementary", { name: "Atención operativa" });
-      const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+      const organization = topbar.getByRole("combobox", { name: "Organización", exact: true });
       const firstId = await organization.inputValue();
       expect(firstId).not.toBe(fixture.organization_id);
       await expect(sidebar).toContainText("Organización activa: E2E Authorized Review Browser");
       for (const reader of [topbar, attention]) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
       await organization.selectOption(fixture.organization_id);
       const switched = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await topbar.getByRole("button", { name: "Cambiar organización" }).click();
       const response = await switched;
       expect(response.request().postDataJSON().organizationId).toBe(fixture.organization_id);
       expect(response.ok()).toBe(true);
@@ -356,7 +357,7 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       await draft.fill("12345");
       await organization.selectOption(firstId);
       const returned = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await topbar.getByRole("button", { name: "Cambiar organización" }).click();
       const returnResponse = await returned;
       expect(returnResponse.request().postDataJSON().organizationId).toBe(firstId);
       expect(returnResponse.ok()).toBe(true);
@@ -459,7 +460,7 @@ test("resizing an open drawer to desktop focuses the visible topbar account", as
     await expect.poll(activeIsVisible).toBe(true);
     await expect(page.getByRole("group", { name: "Organización y cuenta" })).toHaveCount(1);
     await expect(page.locator(".workspace-topbar__controls").locator("summary", { hasText: "Cuenta" })).toBeFocused();
-    await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
     await page.keyboard.press("Tab");
     await expect.poll(activeIsVisible).toBe(true);
   });
@@ -539,9 +540,9 @@ for (const [status, httpStatus, message] of [
       for (const reader of readers) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
       await page.route("**/api/workspace", route => route.fulfill({ status: httpStatus, json: { status } }));
       try {
-        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
         await expect(page.getByRole("group", { name: "Organización y cuenta" })).toContainText(message);
-        await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeEnabled();
+        await expect(page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true })).toBeEnabled();
         for (const reader of readers) {
           await expect(reader).toContainText("No se pudo verificar el estado de revisión.");
           await expect(reader).not.toContainText("elemento(s) de revisión pendiente(s)");
@@ -549,7 +550,7 @@ for (const [status, httpStatus, message] of [
         }
       } finally { await page.unrouteAll({ behavior: "wait" }); }
       const response = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
       expect((await response).ok()).toBe(true);
       for (const reader of readers) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
     });
@@ -562,7 +563,7 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
     const draft = page.getByLabel("Total de votos", { exact: true });
     await draft.fill("12345");
     const response = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await page.getByRole("button", { name: "Cambiar organización" }).click();
+    await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
     expect((await response).ok()).toBe(true);
     await expect(page.locator("header.workspace-topbar")).toContainText("1 elemento(s) de revisión pendiente(s)");
     await expect(draft).toHaveValue("12345");
@@ -571,6 +572,7 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
 });
 
 test("Panorama exposes supporting limits once through a keyboard-operated disclosure", async ({ page }) => {
+  await withReviewItem(page, async () => {
   await page.goto("/");
   const main = page.getByRole("main");
   const disclosure = main.locator("details").filter({ has: page.locator("summary", { hasText: "Fuente y límites" }) });
@@ -590,13 +592,20 @@ test("Panorama exposes supporting limits once through a keyboard-operated disclo
   }
   await page.keyboard.press("Enter");
   await expect(disclosure).not.toHaveAttribute("open", "");
+  });
 });
 
-test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }) => {
+test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }, testInfo) => {
+  await withReviewItem(page, async () => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
-  await expect(heading).toBeVisible();
+  try {
+    await expect(heading).toBeVisible();
+  } catch (error) {
+    await writeWorkspaceStateFacts(page, testInfo, "panorama-heading-failure");
+    throw error;
+  }
   await expect(heading).toHaveCSS("font-size", "32px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();
@@ -643,6 +652,7 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
     await expectNoSevereAccessibilityIssues(page);
     await page.keyboard.press("Escape");
   }
+  });
 });
 
 test.describe("the production root preserves its authentication boundary", () => {
@@ -898,6 +908,9 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(desktopNavigation.getByRole("link", { name: "Evidencia", exact: true })).toHaveAttribute("href", "/evidencia");
     await expect(desktopNavigation.getByRole("link", { name: "Revisión de datos", exact: true })).toHaveAttribute("href", "/review");
 
+    // The no-selection shell above intentionally has no Panorama data content.
+    await expect(page.getByRole("main").getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
+    await withReviewItem(page, async () => {
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
     const explorationHref = await officialRoutes.getByRole("link", { name: "Explorar resultados", exact: true }).getAttribute("href");
@@ -909,6 +922,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
     await expect(separatedRoutes.getByRole("link", { name: "Resultados municipales" })).toHaveAttribute("href", "/municipal");
+    });
     await page
       .getByRole("link", { name: "Ir al contenido principal" })
       .press("Enter");

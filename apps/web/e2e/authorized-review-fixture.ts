@@ -11,7 +11,7 @@ export const REVIEW_ITEM = {
   note: `The official mesa identity needs manual review because ${"the source lineage remains ambiguous; ".repeat(6)}`,
 } as const;
 
-export async function withReviewItem<T>(page: Page, run: () => Promise<T>): Promise<T> {
+export async function withReviewItem<T>(page: Page, run: () => Promise<T>, options: { selectOrganization?: boolean } = {}): Promise<T> {
   const environment = assertE2eEnvironment(process.env);
   const admin = createClient(
     environment.NEXT_PUBLIC_SUPABASE_URL,
@@ -29,19 +29,21 @@ export async function withReviewItem<T>(page: Page, run: () => Promise<T>): Prom
 
   let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
   try {
-    await page.goto("/");
-    const trigger = page.getByRole("button", { name: "Abrir navegación" });
-    const mobile = await trigger.isVisible();
-    if (mobile) await trigger.click();
-    const navigation = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
-    const organizationSelector = navigation.getByRole("combobox", { name: "Organización", exact: true });
-    await expect(organizationSelector).toBeVisible();
-    await organizationSelector.selectOption(fixture.organization_id);
-    const switchResponse = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await navigation.getByRole("button", { name: "Cambiar organización" }).click();
-    const response = await switchResponse;
-    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
-    if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+    if (options.selectOrganization !== false) {
+      await page.goto("/");
+      const trigger = page.getByRole("button", { name: "Abrir navegación" });
+      const mobile = await trigger.isVisible();
+      if (mobile) await trigger.click();
+      const workspaceControls = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
+      const organizationSelector = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
+      await expect(organizationSelector).toBeVisible();
+      await organizationSelector.selectOption(fixture.organization_id);
+      const switchResponse = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
+      await workspaceControls.getByRole("button", { name: "Cambiar organización" }).click();
+      const response = await switchResponse;
+      expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
+      if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+    }
     outcome = { value: await run() };
   } catch (error) {
     outcome = { error };

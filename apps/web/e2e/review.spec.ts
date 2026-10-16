@@ -1,14 +1,18 @@
+import { selectOrganizationInlineOnReview } from "./workspace-selection";
 import { REVIEW_ITEM, withReviewItem } from "./authorized-review-fixture";
 import { writeFile } from "node:fs/promises";
-import { type Locator, type Page } from "@playwright/test";
+import { test as browserTest, type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import { durationInMilliseconds } from "./css-duration";
 import { createReviewStateHandler, reviewPagePayload, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
+
 import { zoomTest } from "./review-zoom-test-fixture";
 import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focus-geometry";
 import { createReviewScrollObserver, withReviewScrollDiagnostics, type ReviewScrollPhase } from "./review-scroll-completion";
+
+browserTest("selecting an organization inline on review refreshes the real page with authorized data", selectOrganizationInlineOnReview);
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -529,8 +533,9 @@ test.describe("the review route reflects the disposable database", () => {
           await tabTo(page, drawer.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, drawer.getByRole("link", { name, exact: true }));
         }
-        const organization = page.getByRole("combobox", { name: "Organización" });
-        const submit = page.getByRole("button", { name: "Cambiar organización" });
+        const workspaceControls = width === 1440 ? page.getByRole("banner") : page.getByRole("dialog", { name: "Navegación principal" });
+        const organization = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
+        const submit = workspaceControls.getByRole("button", { name: "Cambiar organización" });
         await expect(organization).toBeEnabled();
         await expect(submit).toBeEnabled();
         await tabTo(page, organization, false, false, "org-select");
@@ -835,8 +840,8 @@ test.describe("the review route reflects the disposable database", () => {
       );
     });
 
-    // Layout/touch checks may move the page; prove denial at the review destination,
-    // not whichever sidebar link happens to be last in the redesigned navigation.
+    // Cleanup deletes the fixture workspace context and organization. Prove the
+    // resulting selection-required state at /review, not a downstream queue denial.
     const reviewLink = page.getByRole("navigation", { name: "principal", exact: true })
       .getByRole("link", { name: "Revisión de datos", exact: true });
     await expect(reviewLink).toHaveAttribute("href", "/review");
@@ -844,10 +849,13 @@ test.describe("the review route reflects the disposable database", () => {
     await expect(page).toHaveURL(/\/review$/);
     await page.reload();
     const main = page.getByRole("main");
-    await expect(main).toContainText("No se pudo autorizar la cola de revisión.");
-    await expect(main).toContainText(
-      "No se pudo autorizar la cola de revisión.",
-    );
+    await expect(main.getByRole("heading", { level: 1, name: "Cola de revisión", exact: true })).toBeVisible();
+    await expect(main.getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
+    const selection = main.getByRole("region", { name: "Selección de organización", exact: true });
+    await expect(selection).toBeVisible();
+    await expect(selection.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+    await expect(selection.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(0);
+    await expect(main.getByRole("alert")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);
     await expectDocumentNotToOverflow(page);
   });

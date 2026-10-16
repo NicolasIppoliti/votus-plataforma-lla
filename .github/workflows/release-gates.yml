@@ -5,6 +5,10 @@ on:
     branches: [main]
 permissions:
   contents: read
+env:
+  # Supabase CLI pulls its local-stack images from GHCR instead of ECR Public,
+  # whose anonymous data limit is exhausted on shared runners.
+  SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
 jobs:
   scope:
     name: scope
@@ -108,9 +112,9 @@ jobs:
         case: [ordinary, success, ledger, sql]
     services:
       postgres:
-        # Same digest from the ECR Public mirror of Docker official images; avoids
-        # Docker Hub's unauthenticated pull rate limit on shared runners.
-        image: public.ecr.aws/docker/library/postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+        # Same digest from Google's Docker Hub mirror; avoids the unauthenticated
+        # Docker Hub and ECR Public pull limits on shared runners.
+        image: mirror.gcr.io/library/postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:

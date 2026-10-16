@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 
 const rpcState = vi.hoisted(() => ({ data: null as unknown }));
 const CLAIMS = {

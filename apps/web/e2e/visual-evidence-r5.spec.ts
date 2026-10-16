@@ -35,7 +35,7 @@ function signal(page: Page, name: string, locator: Locator) {
 
 test.beforeEach(async ({ page }) => {
   readiness.set(page, { phase: "setup", locators: {
-    organization: page.getByRole("combobox", { name: "Organización", exact: true }),
+    organization: page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true }),
     main: page.getByRole("main"),
     exactDisclosure: page.getByText("Mostrar resultados exactos", { exact: true }),
     comparison: page.getByRole("region", { name: "Comparación territorial de referencia" }),

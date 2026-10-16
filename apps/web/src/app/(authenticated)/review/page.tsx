@@ -3,6 +3,8 @@ import "./review.css";
 import type { ReactNode } from "react";
 import { EvidenceState } from "@/components/EvidenceState";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { TableRegion } from "@/components/TableRegion";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -37,6 +39,8 @@ const REVIEW_EVIDENCE_STATE = {
  * authenticated layout count.
  */
 export default async function ReviewPage({ searchParams }: { searchParams: Promise<{ offset?: string }> }): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Cola de revisión" />;
   const rawOffset = (await searchParams).offset;
   const offset = rawOffset && /^\d{1,10}$/.test(rawOffset) && Number(rawOffset) <= 2_000_000_000 ? Number(rawOffset) : 0;
   const payload = await authorizedReviewItems(await createSupabaseServerClient(), 50, offset);

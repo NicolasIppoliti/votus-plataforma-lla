@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock("@/lib/supabase/server-client", () => ({ createSupabaseServerClient: async () => ({
   auth: { getClaims: async () => ({ data: { claims: { sub: "10000000-0000-4000-8000-000000000001", session_id: "10000000-0000-4000-8000-000000000002", exp: 4102444800 } }, error: null }) },
