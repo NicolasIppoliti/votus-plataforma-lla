@@ -22,3 +22,11 @@ it("retains sticky electoral context below the topbar and compensates scroll tar
   expect(component).toContain('"--electoral-topbar-height"');
   expect(component).toContain("observer.disconnect()");
 });
+
+it("unfolds the Exploración context fold above phone width only where the browser can style details content", () => {
+  const css = readFileSync(new URL("./globals.css", import.meta.url), "utf8");
+  const wide = css.match(/@supports selector\(::details-content\)\s*\{\s*@media \(min-width: 761px\)\s*\{([\s\S]*?)\n  \}\n\}/)?.[1] ?? "";
+  expect(wide).toMatch(/\.electoral-context__fold\s*\{[^}]*display:\s*contents/);
+  expect(wide).toMatch(/\.electoral-context__fold::details-content\s*\{[^}]*display:\s*contents[^}]*content-visibility:\s*visible/);
+  expect(wide).toMatch(/\.electoral-context__fold > summary\s*\{[^}]*display:\s*none/);
+});
