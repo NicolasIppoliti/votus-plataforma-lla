@@ -579,6 +579,25 @@ test.describe("the municipal route requires workspace-authorized official result
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       }
 
+      await page.setViewportSize({ width: 320, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+      expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+      await tableRegion.focus();
+      await expect(tableRegion).toBeFocused();
+      await tableRegion.evaluate((element) => { element.scrollLeft = 0; });
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => tableRegion.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+      await tableRegion.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+      const lastColumn = tableRegion.getByRole("columnheader").last();
+      await expect(lastColumn).toBeVisible();
+      await expect.poll(() => lastColumn.evaluate((element) => {
+        const owner = element.closest('[role="region"]');
+        if (!owner) return false;
+        const region = owner.getBoundingClientRect();
+        const header = element.getBoundingClientRect();
+        return header.left >= region.left && header.right <= region.right;
+      }), { message: "The last Municipal column fits inside its scroll region at the end" }).toBe(true);
+
       await page.setViewportSize({ width: 1440, height: 900 });
       await expect(distribution).toBeVisible();
       await page.emulateMedia({ reducedMotion: "reduce" });
