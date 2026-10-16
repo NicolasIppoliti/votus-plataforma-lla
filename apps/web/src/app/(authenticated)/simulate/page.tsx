@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { officialBaseContext } from "./official-base-context";
 import { loadScenarioSimulation } from "@/lib/scenarios/scenario-simulation";
 import { Alert } from "@/components/ui/alert";
 import { loadOfficialSimulationBase } from "@/lib/scenarios/official-simulation-base";
@@ -381,7 +382,10 @@ export default async function SimulatePage({
   }
   let officialBaseLoaded = false;
   let officialBaseError: string | undefined;
-  if (stringParam(params, "officialBase") === "2025") {
+  // #613: without a scenario of its own, Simulación follows the shared context.
+  const ownsScenario = ["scenario", "input", "baseInput", "officialBase"].some((key) => requestQuery.has(key));
+  const baseContext = ownsScenario ? "unavailable" : await officialBaseContext(params);
+  if (stringParam(params, "officialBase") === "2025" || baseContext === "matches") {
     if (requestQuery.has("input") || requestQuery.has("baseInput")) {
       officialBaseError = "La carga oficial no se puede combinar con datos aportados. Abra la base oficial sin otros escenarios.";
     } else {
@@ -536,6 +540,7 @@ export default async function SimulatePage({
       {scenarioError ? <Alert variant="unavailable">{scenarioError}</Alert> : null}
       <section aria-label="Cargar base oficial">
         <a href="/simulate?officialBase=2025">Cargar base oficial 2025 de Coronel Rosales</a>
+        {baseContext === "other" ? <p role="note">La base oficial disponible es 2025 provinciales · Concejales · Coronel Rosales; la selección actual no tiene base para simular.</p> : null}
         {officialBaseLoaded ? <p>Base oficial 2025 · JEBA definitivo · Concejales · argentinos y extranjeros. Positivos: 32.291; blancos: 2.150; total publicado: 34.441. Base del cociente Hare (sin blancos ni anulados): 32.291. Anulados no publicados: no se infieren como cero. El reparto usa Hare y 9 bancas por elección. Las transferencias posteriores son hipótesis, no resultados oficiales.</p> : null}
         {officialBaseError ? <Alert variant="unavailable">{officialBaseError}</Alert> : null}
       </section>
