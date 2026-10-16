@@ -34,6 +34,26 @@ it("preserves the merged mobile region reading order through both evidence rails
   expect(html.indexOf('id="compare-side-b-heading"')).toBeGreaterThan(html.indexOf('id="compare-side-a-heading"'));
 });
 
+it("folds the secondary chart by default without removing its data", async () => {
+  const html = await render(PARAMS);
+  expect(html).toMatch(/<details[^>]*data-comparison-chart=""[^>]*><summary>Gráfico de participación oficial por partido<\/summary>/);
+  expect(html.match(/<details[^>]*data-comparison-chart=""[^>]*>/)?.[0]).not.toMatch(/\bopen(?:\s|=|>)/);
+  expect(html).toContain('aria-labelledby="compare-chart-heading"');
+  expect(html).toContain("PARTIDO A 2023");
+});
+
+it("folds each official reference while retaining visible evidence and coverage rails", async () => {
+  const html = await render(PARAMS);
+  for (const side of ["A", "B"]) {
+    expect(html).toMatch(new RegExp(`<details[^>]*data-reference-side="${side}"[^>]*><summary>Referencia oficial — Lado ${side}</summary>`));
+    expect(html.match(new RegExp(`<details[^>]*data-reference-side="${side}"[^>]*>`))?.[0]).not.toMatch(/\bopen(?:\s|=|>)/);
+    expect(html).toContain(`Evidencia oficial — Lado ${side}`);
+    expect(html).toContain(`Cobertura y exclusiones — Lado ${side}`);
+  }
+  expect(html).toContain("referencia(s), elección");
+  expect(html).toContain("excluidas de todas las cifras");
+});
+
 it("renders one shared map action set for both official panels", async () => {
   supportedSpatialEvidence();
   const html = await render(PARAMS);

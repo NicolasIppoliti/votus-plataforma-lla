@@ -429,7 +429,7 @@ test.describe("authorized official comparison", () => {
       await expect(rails).toHaveCount(2);
       for (const side of ["A", "B"]) {
         const evidence = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true });
-        const provenance = evidence.locator("details");
+        const provenance = evidence.locator("details.official-compare__provenance");
         await expect(provenance).not.toHaveAttribute("open", "");
         await expect(provenance.getByText(/SHA-256/)).toBeHidden();
         await evidence.getByText(`Procedencia oficial — Lado ${side}`, { exact: true }).press("Enter");
@@ -451,7 +451,10 @@ test.describe("authorized official comparison", () => {
       const hashes = applied.rails.flatMap((rail) => [...rail.matchAll(/SHA-256 ([a-f0-9]{64})/g)].map((match) => match[1]));
       expect(hashes).toHaveLength(2);
       const chart = main.getByRole("region", { name: "Participación por partido", exact: true });
-      await expect(chart).toBeVisible();
+      // The chart is folded behind its own disclosure on the compact hierarchy (#499); open it before reading.
+      const chartDisclosure = main.locator("details[data-comparison-chart]");
+      const openChart = async (): Promise<void> => { if (await chartDisclosure.getAttribute("open") === null) await chartDisclosure.locator("summary").click(); };
+      await openChart(); await expect(chart).toBeVisible();
       await expect(chart).toContainText("100,00 %");
       await expect(chart).toContainText(/votos.*partidos/i);
       // While a new selection is being served, no old figures or evidence remain current.
@@ -482,9 +485,9 @@ test.describe("authorized official comparison", () => {
       await sharedSection.focus();
       await sharedSection.selectOption(identity.seccionCode);
       await expect(page).toHaveURL(servedUrl.toString());
-      await expect(chart).toBeVisible();
+      await openChart(); await expect(chart).toBeVisible();
       for (const side of ["A", "B"]) {
-        const details = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true }).locator("details");
+        const details = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true }).locator("details.official-compare__provenance");
         if (!await details.getAttribute("open").then((value) => value !== null)) await details.locator("summary").click();
       }
       await openExactTable();
@@ -542,7 +545,7 @@ test.describe("authorized official comparison", () => {
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
       });
       await test.step("390px preserves reading order from editors through both evidence rails", async () => {
-        await page.setViewportSize({ width: 390, height: 844 });
+        await page.setViewportSize({ width: 390, height: 844 }); await openChart();
         // Selection details now follow the workbench and its child comparison, rather than preceding maps.
         const ordered = [shared, editA, editB, workbench, main.getByRole("region", { name: "Cambio por territorio", exact: true }), contexts, chart, tableRegion, evidenceA, evidenceB];
         for (let index = 1; index < ordered.length; index++) {
@@ -586,7 +589,7 @@ test.describe("authorized official comparison", () => {
         await expectAppliedUnchanged();
       });
       await page.emulateMedia({ reducedMotion: "reduce" });
-      await expect(chart).toBeVisible();
+      await openChart(); await expect(chart).toBeVisible();
       await page.goto(new URL("/", baseURL).toString());
       await page.goto(servedUrl.toString());
       await page.goBack();
@@ -594,7 +597,7 @@ test.describe("authorized official comparison", () => {
       await page.goForward();
       await expect(page).toHaveURL(servedUrl.toString());
       await expect(sharedSection).toHaveValue(identity.seccionCode);
-      await expect(chart).toBeVisible();
+      await openChart(); await expect(chart).toBeVisible();
       await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
       await expect(chart).toHaveCount(0); await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");
