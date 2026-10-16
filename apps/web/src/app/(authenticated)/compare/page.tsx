@@ -614,7 +614,7 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
       exactResults={<section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading" tabIndex={-1}>Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
-        <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "sin cambio"}.</p>
+        <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "mismo primer lugar en ambos lados"}.</p>
         <details className={styles.selectionNotes} data-comparison-chart=""><summary>Gráfico de participación oficial por partido</summary>
         <ComparisonChart
           swing={swing}
