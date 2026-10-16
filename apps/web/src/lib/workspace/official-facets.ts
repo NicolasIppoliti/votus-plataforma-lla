@@ -1,4 +1,5 @@
 import "server-only";
+import { displayTerritoryName } from "@/lib/results/territory-name";
 import { EXPLORATION_LEVEL, type ExplorationFacetExclusion, type ExplorationFacetSelection, type ExplorationFacets, type FacetOption } from "@/lib/results/exploration";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedOfficialFacets, workspaceContextErrorCategory, WORKSPACE_CONTEXT_ERROR_CATEGORY } from "@/lib/workspace/context";
@@ -39,7 +40,7 @@ function text(value: unknown): string | null { return typeof value === "string" 
 function metadata(value: Record<string, unknown>, prefix: "distrito" | "seccion" | "circuito" | "establecimiento"): FacetOption | null {
   const code = text(value[`${prefix}_code`]), name = value[`${prefix}_name`], status = value[`${prefix}_name_status`], count = value[`${prefix}_name_variant_count`];
   if (!code || (name !== null && !text(name)) || !Number.isSafeInteger(count) || Number(count) < 0) return null;
-  if (status === "present" && typeof name === "string" && count === 1) return { code, name, nameStatus: status, nameVariantCount: count };
+  if (status === "present" && typeof name === "string" && count === 1) return { code, name: prefix === "distrito" || prefix === "seccion" ? displayTerritoryName(name) : name, nameStatus: status, nameVariantCount: count };
   if (status === "missing" && name === null && count === 0) return { code, name, nameStatus: status, nameVariantCount: count };
   if (status === "conflict" && name === null && Number(count) >= 2) return { code, name, nameStatus: status, nameVariantCount: Number(count) };
   return null;

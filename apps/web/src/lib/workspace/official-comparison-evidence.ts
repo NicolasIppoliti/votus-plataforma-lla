@@ -1,4 +1,5 @@
 import "server-only";
+import { territoryName } from "@/lib/results/territory-name";
 import type { OfficialSelection } from "../../app/api/workspace/official/input";
 import { parseOfficialExploration, type ExplorationOk, type ExplorationParty, type ExplorationSourceAudit } from "../results/exploration-contract";
 import { createSupabaseServerClient } from "../supabase/server-client";
@@ -73,7 +74,7 @@ function parseReference(value: Raw, selection: OfficialSelection, result: Explor
   for (const item of items) {
     const entry = record(item), jurisdictionId = entry?.["jurisdiction_id"];
     if (!entry || !text(jurisdictionId) || seen.has(jurisdictionId) || entry["election_id"] !== selection.electionId || entry["category_id"] !== selection.categoryId || entry["distrito_code"] !== selection.distritoCode || entry["seccion_code"] !== selection.seccionCode || entry["year"] !== result.electionYear || entry["round"] !== result.electionRound || !text(entry["category_name"]) || !nullableText(entry["distrito_name"]) || !nullableText(entry["seccion_name"]) || !nullableText(entry["circuito_code"]) || !nullableText(entry["circuito_name"]) || !nullableText(entry["establecimiento_code"]) || !nullableText(entry["establecimiento_name"]) || !(entry["mesa_code"] === null || uint(entry["mesa_code"]))) return null;
-    seen.add(jurisdictionId); parsed.push({ jurisdictionId, electionId: selection.electionId, year: result.electionYear, round: result.electionRound, categoryId: selection.categoryId, categoryName: entry["category_name"], distritoCode: selection.distritoCode, distritoName: entry["distrito_name"] as string | null, seccionCode: selection.seccionCode!, seccionName: entry["seccion_name"] as string | null, circuitoCode: entry["circuito_code"] as string | null, circuitoName: entry["circuito_name"] as string | null, establecimientoCode: entry["establecimiento_code"] as string | null, establecimientoName: entry["establecimiento_name"] as string | null, mesaCode: entry["mesa_code"] as number | null });
+    seen.add(jurisdictionId); parsed.push({ jurisdictionId, electionId: selection.electionId, year: result.electionYear, round: result.electionRound, categoryId: selection.categoryId, categoryName: entry["category_name"], distritoCode: selection.distritoCode, distritoName: territoryName(entry["distrito_name"]), seccionCode: selection.seccionCode!, seccionName: territoryName(entry["seccion_name"]), circuitoCode: entry["circuito_code"] as string | null, circuitoName: entry["circuito_name"] as string | null, establecimientoCode: entry["establecimiento_code"] as string | null, establecimientoName: entry["establecimiento_name"] as string | null, mesaCode: entry["mesa_code"] as number | null });
   }
   return { items: parsed, sourceExclusions };
 }

@@ -1,4 +1,5 @@
 import { profileServerSpan } from "@/lib/workspace/profile-server";
+import { sourceKindLabel } from "@/lib/results/source-kind-label";
 import type { ReactNode } from "react";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext } from "@/lib/context/url";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
@@ -34,8 +35,7 @@ import {
   type ExplorationFacets,
   type ExplorationLevel,
   type ExplorationSourceAudit,
-  type SchoolBreakdownExclusion,
-} from "@/lib/results/exploration";
+  type SchoolBreakdownExclusion, formatTerritoryHeading } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
   AuthorizedOfficialFacetsError,
@@ -120,12 +120,6 @@ function formatCounts(counts: Readonly<Record<string, number>>): string {
   return Object.entries(counts).map(([reason, count]) => `${reason}: ${count}`).join(", ");
 }
 
-function displaySourceKind(kind: string): string {
-  if (kind === "official") return "oficial";
-  if (kind === "fiscalizacion") return "fiscalización";
-  if (kind === "unknown") return "desconocida";
-  return kind;
-}
 
 function facetExclusionNotes(
   exclusions: readonly ExplorationFacetExclusion[],
@@ -149,7 +143,7 @@ function sourceExclusionNotes(
 ): ReactNode {
   return exclusions.map((exclusion) => (
     <p role="note" key={`${aggregate}-${exclusion.kind}`}>
-      Se excluyeron {formatCount(exclusion.rows)} {exclusion.rows === 1 ? "fila" : "filas"} de fuente {displaySourceKind(exclusion.kind)} / {formatCount(exclusion.votes)} {exclusion.votes === 1 ? "voto" : "votos"} del agregado {aggregate}.
+      Se excluyeron {formatCount(exclusion.rows)} {exclusion.rows === 1 ? "fila" : "filas"} de fuente {sourceKindLabel(exclusion.kind)} / {formatCount(exclusion.votes)} {exclusion.votes === 1 ? "voto" : "votos"} del agregado {aggregate}.
     </p>
   ));
 }
@@ -184,7 +178,7 @@ function RefusalEvidence({ evidence }: { evidence: EvidenceRefusalWithDetails["e
       ))}
       {part.sourceExclusions?.map((entry) => (
         <p role="note" key={`${part.part}-source-${entry.kind}`}>
-          Fuente excluida {displaySourceKind(entry.kind ?? "unknown")}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}
+          Fuente excluida {sourceKindLabel(entry.kind ?? "unknown")}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}
         </p>
       ))}
     </section>
@@ -341,7 +335,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <h3 id="reference-heading">Referencia electoral autorizada</h3>
         {reference.sourceExclusions.map((entry) => (
           <p role="note" key={`reference-${entry.kind}`}>
-            Se excluyeron {formatCount(entry.rows)} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {facetExclusionLabel(entry.reason)}.
+            Se excluyeron {formatCount(entry.rows)} fila(s) de referencia de fuente {sourceKindLabel(entry.kind)}: {facetExclusionLabel(entry.reason)}.
           </p>
         ))}
         <TableRegion label="Referencia electoral autorizada">
@@ -394,7 +388,7 @@ function territorialItems(facets: ExplorationFacets, selected: ExplorerFormProps
     if (!option) break;
     values[key] = option.code;
     if (key !== "distritoCode") values.level = key === "seccionCode" ? "seccion" : key === "circuitoCode" ? "circuito" : "establecimiento";
-    items.push({ name: option.nameStatus === "present" && option.name ? option.name : formatFacetOptionLabel(option), values: { ...values } });
+    items.push({ name: key === "distritoCode" || key === "seccionCode" ? formatTerritoryHeading(option, key === "distritoCode" ? "Distrito" : "Sección") : option.nameStatus === "present" && option.name ? option.name : formatFacetOptionLabel(option), values: { ...values } });
   }
   if (selected.mesaCode !== undefined && facets.mesas.some(option => option.code === selected.mesaCode)) {
     items.push({ name: `Mesa ${selected.mesaCode}`, values: { ...values, mesaCode: selected.mesaCode, level: "mesa" } });

@@ -50,6 +50,18 @@ it("labels facet exclusions in Spanish at the rendered page boundary and preserv
   expect(html).not.toContain("non_official_source_rows");
   expect(html).toContain("Opciones excluidas: motivo no reconocido (future_exclusion); 2 fila(s).");
 });
+it("labels the excluded fiscalización source with its accent in every evidence block (#612)", async () => {
+  const payload = bundle();
+  Object.assign(payload.reference, { source_exclusions: [{ kind: "fiscalizacion", reason: "non_official_source", rows: 4 }] });
+  Object.assign(payload.provenance, { source_exclusions: [{ kind: "fiscalizacion", rows: 3, votes: 30 }] });
+  Object.assign(payload.schools, { source_exclusions: [{ kind: "fiscalizacion", rows: 2, votes: 20 }] });
+  mocks.bundle.mockResolvedValue(payload);
+  const html = await render();
+  expect(html).toContain("Referencia: fuente excluida fiscalización; razón fuente no oficial; 4 fila(s).");
+  expect(html).toContain("Procedencia: fuente excluida fiscalización; 3 fila(s) / 30 voto(s).");
+  expect(html).toContain("Establecimientos: fuente excluida fiscalización; 2 fila(s) / 20 voto(s).");
+  expect(html).not.toMatch(/excluida fiscalizacion/);
+});
 it("translates source and school exclusions in the rendered rail", async () => {
   const payload = bundle();
   Object.assign(payload.reference, { source_exclusions: [{ kind: "fiscalizacion", reason: "non_official_source", rows: 4 }] });

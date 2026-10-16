@@ -1,4 +1,5 @@
 import "server-only";
+import { territoryName } from "@/lib/results/territory-name";
 import { profileServerSpan } from "./profile-server";
 import { loadOfficialSectionCircuitOutcomes, type OfficialSectionCircuitOutcomes } from "./official-section-circuit-outcomes";
 import { loadOfficialInternalLists, type OfficialInternalLists } from "./official-internal-lists";
@@ -219,8 +220,8 @@ function parseReference(value: Raw, selection: OfficialSelection): OfficialRefer
     parsed.push({ jurisdictionId: entry["jurisdiction_id"] as string, electionId: selection.electionId,
       year: entry["year"] as number, round: entry["round"] as string, categoryId: selection.categoryId,
       categoryName: entry["category_name"] as string, distritoCode: selection.distritoCode,
-      distritoName: entry["distrito_name"] as string | null, seccionCode: selection.seccionCode!,
-      seccionName: entry["seccion_name"] as string | null, circuitoCode: entry["circuito_code"] as string | null,
+      distritoName: territoryName(entry["distrito_name"]), seccionCode: selection.seccionCode!,
+      seccionName: territoryName(entry["seccion_name"]), circuitoCode: entry["circuito_code"] as string | null,
       circuitoName: entry["circuito_name"] as string | null, establecimientoCode: entry["establecimiento_code"] as string | null,
       establecimientoName: entry["establecimiento_name"] as string | null, mesaCode: entry["mesa_code"] as number | null });
   }

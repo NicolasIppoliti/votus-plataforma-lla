@@ -352,3 +352,12 @@ describe("AuthorizedOfficialFacetRepository", () => {
     await expect(new AuthorizedOfficialFacetRepository(() => Promise.resolve(payload([]))).facets({})).resolves.toMatchObject({ elections: [] });
   });
 });
+
+describe("territory display names (#611)", () => {
+  it("names distrito and sección in mixed case even when the source spells them in upper case", async () => {
+    const upper = { ...row, distrito_name: "BUENOS AIRES", seccion_name: "CORONEL DE MARINA L. ROSALES" };
+    const facets = await new AuthorizedOfficialFacetRepository(() => Promise.resolve(payload([upper]))).facets({ electionId: IDS.election, categoryId: IDS.category, distritoCode: "02" });
+    expect(facets.distritos).toEqual([{ code: "02", name: "Buenos Aires", nameStatus: "present", nameVariantCount: 1 }]);
+    expect(facets.secciones).toEqual([{ code: "027", name: "Coronel de Marina L. Rosales", nameStatus: "present", nameVariantCount: 1 }]);
+  });
+});

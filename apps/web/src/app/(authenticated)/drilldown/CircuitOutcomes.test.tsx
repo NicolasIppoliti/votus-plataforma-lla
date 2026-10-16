@@ -15,3 +15,10 @@ it("shows a circuit code once when the source names the circuit by its code (#45
   expect(html).not.toContain("— 00248");
   expect(html).toContain("<span> — Sur</span>");
 });
+
+it("labels circuit status in Spanish and keeps the per-reason counters in a disclosure (#612)", () => {
+  const html = renderToStaticMarkup(<CircuitOutcomes outcomes={outcomes} rosales view="table" />);
+  expect(html).not.toMatch(/>complete</);
+  expect(html).not.toContain("<td>complete");
+  expect(html).toContain("<td>Completo<details><summary>Detalle de mesas</summary>no escrutadas: 0; sin estado: 0; inesperadas: 0; cuarentena: 0</details></td>");
+});
