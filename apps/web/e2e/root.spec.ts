@@ -571,6 +571,7 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
 });
 
 test("Panorama exposes supporting limits once through a keyboard-operated disclosure", async ({ page }) => {
+  await withReviewItem(page, async () => {
   await page.goto("/");
   const main = page.getByRole("main");
   const disclosure = main.locator("details").filter({ has: page.locator("summary", { hasText: "Fuente y límites" }) });
@@ -590,6 +591,7 @@ test("Panorama exposes supporting limits once through a keyboard-operated disclo
   }
   await page.keyboard.press("Enter");
   await expect(disclosure).not.toHaveAttribute("open", "");
+  });
 });
 
 test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }, testInfo) => {
