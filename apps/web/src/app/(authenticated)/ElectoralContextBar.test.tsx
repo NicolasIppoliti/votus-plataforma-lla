@@ -11,24 +11,29 @@ const state = vi.hoisted(() => ({
   load: vi.fn(),
   loaded: null as unknown,
   pathname: "/fiscalizacion",
+  snapshot: null as { status: string; organizationId: string | null; revision: number | null } | null,
+  setters: [] as Array<ReturnType<typeof vi.fn>>,
 }));
 vi.mock("react", async original => ({
   ...await original<typeof import("react")>(),
   useEffect: (effect: () => void) => { state.effects.push(effect); },
   useRef: () => ({ current: state.bar }),
-  useState: (initial: unknown) => [state.loaded ?? initial, vi.fn()],
+  // The loaded-options state starts as null; other state (the retry attempt) keeps its initial value.
+  useState: (initial: unknown) => { const set = vi.fn(); state.setters.push(set); return [initial === null ? state.loaded : initial, set]; },
 }));
 vi.mock("next/navigation", () => ({
   usePathname: () => state.pathname,
   useSearchParams: () => new URLSearchParams(state.query),
   useRouter: () => ({ push: state.push, replace: state.replace, refresh: state.refresh }),
 }));
-vi.mock("./WorkspacePresentation", () => ({ useWorkspaceSnapshot: () => null }));
+vi.mock("./WorkspacePresentation", () => ({ useWorkspaceSnapshot: () => state.snapshot }));
 vi.mock("./context-actions", () => ({ loadContextOptions: state.load }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   state.effects.length = 0;
+  state.setters.length = 0;
+  state.snapshot = null;
   state.bar = null;
   state.loaded = null;
   state.pathname = "/fiscalizacion";
@@ -146,4 +151,34 @@ it("keeps the shared bar unfolded on every other data route", () => {
     state.pathname = pathname;
     expect(renderToStaticMarkup(<ElectoralContextBar />)).not.toContain("<details");
   }
+});
+
+it("treats a missing organization as a prerequisite: neutral note, no controls, no load (#598)", () => {
+  state.pathname = "/";
+  state.snapshot = { status: "selection_required", organizationId: null, revision: 3 };
+  const markup = renderToStaticMarkup(<ElectoralContextBar />);
+  expect(markup).toContain('<section aria-label="Contexto electoral"');
+  expect(markup).toMatch(/data-variant="needs-selection"[^>]*>[\s\S]*El contexto electoral se habilita al elegir una organización\./);
+  expect(markup).not.toContain("Contexto electoral: Elección");
+  expect(markup).not.toContain("No se pudo verificar el contexto autorizado.");
+  for (const effect of state.effects) effect();
+  expect(state.load).not.toHaveBeenCalled();
+});
+
+it("reaches the unavailable state when the options request itself rejects (#598)", async () => {
+  state.pathname = "/";
+  state.load.mockRejectedValue(new Error("network"));
+  renderToStaticMarkup(<ElectoralContextBar />);
+  for (const effect of state.effects) effect();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(state.setters.some(set => set.mock.calls.some(([value]) => value && typeof value === "object" && "query" in value && (value as { result: unknown }).result === null))).toBe(true);
+});
+
+it("offers a retry that keeps the URL context when options are unavailable (#598)", () => {
+  state.pathname = "/";
+  state.loaded = { query: state.query, result: null };
+  const markup = renderToStaticMarkup(<ElectoralContextBar />);
+  expect(markup).toContain("No se pudo verificar el contexto autorizado.");
+  expect(markup).toMatch(/<button[^>]*type="button"[^>]*>Reintentar<\/button>/);
+  expect(state.push).not.toHaveBeenCalled();
 });

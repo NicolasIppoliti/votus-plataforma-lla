@@ -21,6 +21,10 @@ export function ElectoralContextBar() {
 }
 function WorkspaceControls() {
   const snapshot = useWorkspaceSnapshot();
+  // #598: no organization yet is a prerequisite, not a failure; nothing to load.
+  if (snapshot?.status === "selection_required" || snapshot?.status === "stale") {
+    return <section aria-label="Contexto electoral" className="electoral-context shell-container"><Alert variant="needs-selection" presentation="inline">El contexto electoral se habilita al elegir una organización.</Alert></section>;
+  }
   return <ContextControls key={`${snapshot?.organizationId}/${snapshot?.revision}/${snapshot?.status}`} />;
 }
 function ContextControls() {
@@ -49,11 +53,13 @@ function ContextControls() {
   const pathname = usePathname();
   const router = useRouter();
   const [loaded, setLoaded] = useState<{ query: string; result: Awaited<ReturnType<typeof loadContextOptions>> } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let current = true;
-    void loadContextOptions(query).then(result => { if (current) setLoaded({ query, result }); });
+    // A rejected request (for example a lost connection) is unavailable, never an endless "Cargando…" (#598).
+    loadContextOptions(query).then(result => { if (current) setLoaded({ query, result }); }, () => { if (current) setLoaded({ query, result: null }); });
     return () => { current = false; };
-  }, [query]);
+  }, [query, attempt]);
   const parsed = parseElectoralContext(new URLSearchParams(query));
   const result = loaded?.query === query ? loaded.result : null;
   const context: ElectoralContext = result?.context ?? (parsed.status === "ok" ? parsed.value : { sourceKind: "official" });
@@ -102,7 +108,7 @@ function ContextControls() {
       ? <details className="electoral-context__fold"><summary><strong>Contexto electoral</strong> <span>{values}</span></summary><div className="electoral-context__controls">{controls}</div></details>
       : controls}
     {context.sourceKind === "fiscalizacion" && <Alert variant="caveat" presentation="inline">Fiscalización: fuente no oficial. No se combina con resultados oficiales.</Alert>}
-    {parsed.status !== "ok" ? <Alert variant="error" presentation="inline">Contexto inválido: {parsed.reason}</Alert> : loaded?.query === query && !result ? <Alert variant="unavailable" presentation="inline">No se pudo verificar el contexto autorizado.</Alert> : !facets ? <p role="status">Cargando contexto autorizado…</p> : null}
+    {parsed.status !== "ok" ? <Alert variant="error" presentation="inline">Contexto inválido: {parsed.reason}</Alert> : loaded?.query === query && !result ? <Alert variant="unavailable" presentation="inline" action={<button type="button" onClick={() => { setLoaded(null); setAttempt(value => value + 1); }}>Reintentar</button>}>No se pudo verificar el contexto autorizado.</Alert> : !facets ? <p role="status">Cargando contexto autorizado…</p> : null}
     <noscript>Los formularios de cada página siguen disponibles sin JavaScript.</noscript>
   </section>;
 }
