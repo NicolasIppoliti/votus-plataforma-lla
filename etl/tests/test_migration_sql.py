@@ -23,7 +23,8 @@ def test_official_facet_exclusions_are_scope_first_and_reversible() -> None:
     for fragment in (
         "create index result_row_facet_exclusion_scope_idx",
         "on public.result_row(jurisdiction_id,election_id,category_id)",
-        "include(source_kind) where vote_kind='positivo' and source_kind is distinct from 'official'",
+        "include(source_kind) where vote_kind='positivo'"
+        " and source_kind is distinct from 'official'",
         "select distinct distrito_code,seccion_code",
         "union all",
         "cross join lateral",
