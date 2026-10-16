@@ -56,18 +56,18 @@ export function Panorama({ data }: { data: PanoramaData }) {
       <div className={styles.map}>
         <p className={styles.trail}>Territorio del contexto electoral</p>
         <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? <RosalesTerritoryName /> : context?.seccionCode ? `Sección ${context.seccionCode} · distrito ${context.distritoCode}` : "Seleccione una sección en la barra de contexto"}</p></header>
+        {mapped ? <section className={styles.circuitMap} aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} highlighted={selectable ? focusedCircuit ?? hoveredCircuit : null} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno de la sección seleccionada" referenceRosales consolidatedLimits /> : <div className={styles.noMap}><p>Mapa de referencia no disponible para esta selección.</p><p>No se reutilizan cifras de Coronel Rosales para representar otro territorio.</p></div>}
+        {/* Codes stay in detail below the map so the map remains above the fold (#458, #455). */}
         {rosales && <RosalesAdministrativeDetails />}
-        {mapped ? <section aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} highlighted={selectable ? focusedCircuit ?? hoveredCircuit : null} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno de la sección seleccionada" referenceRosales consolidatedLimits /> : <div className={styles.noMap}><p>Mapa de referencia no disponible para esta selección.</p><p>No se reutilizan cifras de Coronel Rosales para representar otro territorio.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
         <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
         {result && <>
           <p>{result.electionYear} · {result.electionRound} · {result.categoryName}</p>
           <div className={styles.leader}><span>{complete ? "Primer lugar observado" : "En cabeza · provisional"}</span><strong>{result.totalVotes === 0 ? "Cero votos" : tied ? "Empate en primer lugar" : leader ? name(leader) : "Sin agrupaciones disponibles"}</strong>
-            <div className={styles.metrics}><p><span>Sobre votos positivos</span><b>{leader?.voteShare == null ? "No disponible" : `${formatDecimal(Number(leader.voteShare) * 100)} %`}</b></p><p><span>Margen sobre el segundo</span><b>{leader && ranked.length > 1 && result.totalVotes > 0 ? `${formatDecimal((leader.votes - ranked[1]!.votes) / result.totalVotes * 100)} pp` : "No disponible"}</b></p></div>
+            <div className={styles.metrics}><p><span>Sobre {formatCount(result.totalVotes)} votos positivos oficiales</span><b>{leader?.voteShare == null ? "No disponible" : `${formatDecimal(Number(leader.voteShare) * 100)} %`}</b></p><p><span>Margen sobre el segundo</span><b>{leader && ranked.length > 1 && result.totalVotes > 0 ? `${formatDecimal((leader.votes - ranked[1]!.votes) / result.totalVotes * 100)} pp` : "No disponible"}</b></p></div>
           </div>
-          <dl className={styles.totals}><dt>Votos positivos oficiales</dt><dd>{formatCount(result.totalVotes)}</dd><dt>Completitud de mesas</dt><dd>{completeness?.status === "complete" || completeness?.status === "partial" ? `${formatCount(completeness.counts.counted)} / ${formatCount(completeness.counts.expected)}` : "No disponible"}</dd></dl>
-          <ul className={styles.distribution} aria-label="Distribución de votos positivos oficiales">{inspectorDistribution(result.parties).map((row, index) => <li key={index}><span>{row.name}</span><span>{formatCount(row.votes)} votos · {row.share === null ? "Porcentaje no disponible" : `${formatDecimal(row.share)} %`}</span>{row.share !== null && <meter min={0} max={100} value={row.share} aria-label={`${row.name}: porcentaje de votos positivos`} />}</li>)}</ul>
+
           <a className={styles.exactLink} href={data.href}>Ver resultados exactos en Exploración</a>
         </>}
       </aside>
@@ -75,6 +75,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <PanoramaChildren key={territory} data={data} selectedCircuit={selectedCircuit} onClearSelection={() => { clearHighlight(); selectCircuit(null); }} onHoverCircuit={setHoveredCircuit} onFocusCircuit={setFocusedCircuit} />
     <details className={styles.evidence}>
       <summary id="official-evidence-heading">Fuente y límites</summary>
+      <h3>Límites y evidencia</h3>
       <p>Fiscalización es una fuente no oficial, de consulta separada; sus cifras no se combinan con las de este panorama.</p>
       <p>La geometría CNE es referencia geográfica, no cobertura electoral. Geometría no certificada como límite electoral 2025. Aplicabilidad electoral desconocida; no acredita equivalencia histórica.</p>
       <p>Fuente geográfica: CNE · recuperada el 24/09/2026. {mapped ? "0248B y 0248C se superponen en la fuente; su área compartida se muestra neutra y rayada." : "Contorno ancestro; sin geometría propia para unidades inferiores ni mapa de ganadores disponible para esta selección."}</p>
@@ -82,6 +83,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
       <p>No hay participación, comparación histórica ni pronóstico disponibles en esta lectura.</p>
       <p>Las consultas conservan el alcance de cada fuente. La disponibilidad depende del territorio y del acceso autorizado.</p>
       {result && <>
+        <dl className={styles.totals}><dt>Votos positivos oficiales</dt><dd>{formatCount(result.totalVotes)}</dd><dt>Completitud de mesas</dt><dd>{completeness?.status === "complete" || completeness?.status === "partial" ? `${formatCount(completeness.counts.counted)} / ${formatCount(completeness.counts.expected)}` : "No disponible"}</dd></dl>
+        <ul className={styles.distribution} aria-label="Distribución de votos positivos oficiales">{inspectorDistribution(result.parties).map((row, index) => <li key={index}><span>{row.name}</span><span>{formatCount(row.votes)} votos · {row.share === null ? "Porcentaje no disponible" : `${formatDecimal(row.share)} %`}</span>{row.share !== null && <meter min={0} max={100} value={row.share} aria-label={`${row.name}: porcentaje de votos positivos`} />}</li>)}</ul>
         <p>Denominador de porcentajes y margen: {formatCount(result.totalVotes)} votos positivos suministrados; no es participación ni padrón. La completitud se refiere al catálogo esperado para las categorías informadas en el distrito.</p>
         <p>Nivel del informe: {granularityLabel(result.level)}. Granularidad real de la fuente: {granularityLabel(result.sourceGranularity)}.</p>
       </>}

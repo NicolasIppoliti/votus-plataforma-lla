@@ -39,6 +39,17 @@ const data: PanoramaData = {
   },
 };
 
+it("keeps the official denominator in the reduced headline when circuit outcomes are unavailable (#467)", () => {
+  if (data.evidence?.status !== "ok") throw new Error("fixture must be ok");
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, evidence: { ...data.evidence, circuitOutcomes: { status: "unavailable" } } }} />);
+  const summary = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'));
+  expect(summary).toContain("220 votos positivos oficiales");
+  expect(summary).toContain("Grupo 6");
+  expect(summary).toContain("27,27 %");
+  expect(summary).toContain("4,55 pp");
+  expect(summary).not.toContain("Distribución de votos positivos oficiales");
+});
+
 it("labels exclusion and quarantine reasons across territorial surfaces (#501)", () => {
   const evidence = data.evidence!;
   if (evidence.status !== "ok" || evidence.circuitOutcomes?.status !== "ok") throw new Error("fixture must be ok");
@@ -155,6 +166,23 @@ it.each([undefined, { status: "unavailable" } as const])("discloses unavailable 
   expect(html).not.toContain("00248 — Norte");
 });
 
+it("keeps the headline beside the map and folds supporting evidence after the circuit table (#458)", () => {
+  const html = renderToStaticMarkup(<Panorama data={data} />);
+  const summary = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'));
+  expect(summary).toContain("Grupo 6");
+  expect(summary).toContain("27,27 %");
+  expect(summary).toContain("4,55 pp");
+  expect(summary).not.toContain("Distribución de votos positivos oficiales");
+  expect(summary).not.toContain("Votos positivos oficiales</dt>");
+  const disclosure = html.indexOf('<summary id="official-evidence-heading">Fuente y límites</summary>');
+  expect(disclosure).toBeGreaterThan(html.indexOf('id="panorama-children-heading"'));
+  const detailsStart = html.lastIndexOf('<details', disclosure);
+  expect(html.slice(detailsStart, disclosure)).not.toContain('open');
+  expect(html.slice(disclosure)).toContain('Distribución de votos positivos oficiales');
+  expect(html.slice(disclosure)).toContain('Granularidad real de la fuente');
+  expect(summary).toContain('Completitud no confirmada');
+});
+
 it("collects supporting caveats once in a collapsed source disclosure", () => {
   const html = renderToStaticMarkup(<OperationalBriefing data={data} />);
   expect(html).toContain('<summary id="official-evidence-heading">Fuente y límites</summary>');
@@ -236,6 +264,14 @@ it("renders the shared circuit encoding from the table outcomes on the real Pano
   expect(html).toContain("Codificación de circuitos");
   expect(html).toContain("Grupo 6 · provisional");
   expect(html).toContain("Ganadores por circuito");
+  const summary = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'));
+  expect(summary).toContain("27,27 %");
+  expect(summary).toContain("4,55 pp");
+  expect(summary).not.toContain("Distribución de votos positivos oficiales");
+  const disclosure = html.indexOf('<summary id="official-evidence-heading">Fuente y límites</summary>');
+  expect(disclosure).toBeGreaterThan(html.indexOf('id="panorama-children-heading"'));
+  expect(html.slice(disclosure)).toContain("Panorama muestra el primer lugar observado y margen por circuito cuando están disponibles.");
+  expect(html).not.toContain("Panorama termina en el partido");
   const panel = html.slice(html.indexOf('<summary id="official-evidence-heading">'));
   for (const caveat of ["Aplicabilidad electoral desconocida", "0248B y 0248C se superponen en la fuente", "Fiscalización es una fuente no oficial"]) {
     expect(panel).toContain(caveat);
