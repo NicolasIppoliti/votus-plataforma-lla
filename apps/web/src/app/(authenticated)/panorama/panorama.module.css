@@ -36,9 +36,9 @@
    Its Exploration-only winner heading is redundant with this overview heading. */
 .map > section { border: 0; border-radius: 0; }
 .map > section > header { display: flex; }
-/* Keep the fallback drawing compact below the shared electoral context bar.
-   Only Panorama owns this bound; Exploration retains its full-sized stage. */
-.workbench .map > section[data-map-kind="locator"] > div { height: 160px; min-height: 0; }
+/* Keep the fallback drawing above the fold even with the authorized workspace
+   header and review notice. Exploration retains its full-sized shared stage. */
+.workbench .map > section[data-map-kind="locator"] > div { height: 120px; min-height: 0; }
 .noMap { min-height: 420px; display: flex; flex-direction: column; justify-content: center; padding: 24px; background: #091724; color: #b9c8d2; }
 .summary { border-left: 1px solid #284255; padding: 24px 22px 18px; min-width: 0; }
 .summary p { font-size: 13px; color: #b9c8d2; line-height: 1.7; }
