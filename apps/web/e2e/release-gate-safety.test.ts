@@ -3104,8 +3104,9 @@ describe("base contracts", () => {
 		]);
 		expect(workflow).toMatch(/^  pull_request:$/m);
 		expect(workflow).toMatch(/^  push:\n    branches: \[main, develop\]$/m);
-		// Superseded pull-request and develop runs are cancelled; main runs never are.
-		expect(workflow).toMatch(/^concurrency:\n  group: release-gates-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n  cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}$/m);
+		// Superseded pull-request and develop runs are cancelled; each main commit
+		// gets its own group, so a main run is never cancelled nor replaced while pending.
+		expect(workflow).toMatch(/^concurrency:\n  group: release-gates-\$\{\{ github\.event\.pull_request\.number \|\| \(github\.ref == 'refs\/heads\/main' && github\.sha\) \|\| github\.ref \}\}\n  cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}$/m);
 		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
 		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
 		for (const releaseJob of [webStatic, etlRelease, e2eRelease, e2eSql])

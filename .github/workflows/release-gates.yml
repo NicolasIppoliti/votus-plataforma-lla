@@ -4,9 +4,10 @@ on:
   push:
     branches: [main, develop]
 # A newer commit supersedes an in-flight run on the same pull request or on
-# develop; main runs always finish so every main commit keeps its own verdict.
+# develop. Each main commit gets its own group, so a main run is never
+# cancelled nor replaced while pending, and every main commit keeps its verdict.
 concurrency:
-  group: release-gates-${{ github.event.pull_request.number || github.ref }}
+  group: release-gates-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
