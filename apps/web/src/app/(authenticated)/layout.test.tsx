@@ -436,6 +436,17 @@ it.each([
   expect(panorama.evidence).not.toHaveBeenCalled();
 });
 
+it("asks for a choice, not an outage, when two 2025 elections both carry CONCEJALES (#605)", async () => {
+  panorama.evidence.mockClear();
+  panorama.facets.mockResolvedValueOnce({ elections: [{ id: "a", year: 2025, round: "provinciales" }, { id: "b", year: 2025, round: "generales" }] });
+  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "ca", name: "CONCEJALES" }] });
+  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "cb", name: "CONCEJALES" }] });
+  const markup = renderToStaticMarkup(await HomePage() as ReactElement);
+  expect(markup).toMatch(/role="status"[^>]*>No hay una selección predeterminada única\. Elija elección, categoría y sección en la barra de contexto electoral\./);
+  expect(markup).not.toContain("La selección oficial predeterminada no está disponible.");
+  expect(panorama.evidence).not.toHaveBeenCalled();
+});
+
 it("offers each home workflow once and keeps source qualifications next to its task", async () => {
   navigation.pathname = "/";
   const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
