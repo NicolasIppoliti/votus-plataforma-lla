@@ -244,7 +244,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <Navigator facets={facets} selected={selected} />
           <ObservedLeader result={result} completeness={<SectionCompleteness completeness={evidence.completeness} selection={selection} />} />
           <InspectorDistribution result={result} />
-          <section className={styles.readingNote} aria-label="Antes de interpretar"><h3>Antes de interpretar</h3><p>Confirmá la fuente oficial y la categoría {result.categoryName}. Verificá la comparabilidad temporal de categorías, agrupaciones y límites territoriales antes de comparar elecciones.</p></section>
+          <details className={styles.readingNote}><summary>Antes de interpretar</summary><p>Confirmá la fuente oficial y la categoría {result.categoryName}. Verificá la comparabilidad temporal de categorías, agrupaciones y límites territoriales antes de comparar elecciones.</p></details>
         </section>
       </section>
       <TerritorialBreakdown key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()} context={`${result.categoryName} · ${result.electionYear} ${result.electionRound} · fuente oficial`}>
@@ -474,7 +474,8 @@ function PageShell({ facets, selected, children, workbench = true, showTrail = t
 }
 
 function GeographicEvidence() {
-  return <>
+  return <details className={styles.secondaryDisclosure}>
+        <summary>Referencias geográficas y fuentes</summary>
         <section className={styles.province} aria-label="Evidencia de referencia argentina">
           <div className={styles.provinceCopy}>
             <h2 id="national-reference-heading">Argentina: referencia geográfica</h2>
@@ -492,7 +493,7 @@ function GeographicEvidence() {
             <p className={styles.attribution}>FUENTE: Instituto Geográfico Nacional de la República Argentina · Datos geográficos recuperados el 28/09/2026; metadatos IGN 2019. Sin aval del IGN ni correspondencia electoral certificada.</p>
           </div>
         </section>
-  </>;
+  </details>;
 }
 
 function refusalPage(message: ReactNode): ReactNode {

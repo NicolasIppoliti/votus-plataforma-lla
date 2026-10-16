@@ -260,3 +260,14 @@
 .selectionNotes { margin-top: 8px; font-size: .8125rem; color: var(--secondary-ink); }
 .selectionNotes > summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
 .selectionNotes p { overflow-wrap: anywhere; }
+.secondaryDisclosure { min-width: 0; }
+.secondaryDisclosure > summary, .readingNote > summary { min-height: 44px; padding-block: 12px; cursor: pointer; color: var(--secondary-ink); font-size: .8125rem; }
+.secondaryDisclosure > section { margin-top: 12px; }
+@media (max-width: 480px) {
+  .inspector .total { padding-block: 12px; }
+  .inspector .detailSubtitle { margin-bottom: 12px; }
+  .inspector .categoryChip { margin-bottom: 12px; }
+  .inspectorDistribution { padding-top: 12px; }
+  .readingNote { padding-top: 0; margin-top: 12px; }
+  .territorialBreakdown, .exactSection { padding: 12px; }
+}
