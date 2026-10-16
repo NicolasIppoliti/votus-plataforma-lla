@@ -591,7 +591,7 @@ describe("explicit release-gate lanes", () => {
 		expect(analyzed).toEqual({ ...normal, analyzeProductionBuild: true });
 		expect(analyzed.mode).toBe(RELEASE_GATE_MODE.FOCUSED);
 		expect(analyzed.selectedSpecs).toEqual([selected]);
-		expect(analyzed.pgTapProofs).toHaveLength(18);
+		expect(analyzed.pgTapProofs).toHaveLength(19);
 		expect(analyzed.rollbackReapplyProofs).toHaveLength(2);
 		expect(analyzed.runBrowser).toBe(true);
 	});
@@ -635,7 +635,7 @@ describe("explicit release-gate lanes", () => {
 		expect(plan.pgTapProofs).toEqual(lane === "sql" ? full.pgTapProofs : []);
 		expect(plan.setupProofs).toEqual(lane === "sql" ? full.setupProofs : []);
 		expect(plan.postPgTapCleanupProofs).toEqual(lane === "sql" ? full.postPgTapCleanupProofs : []);
-		if (lane === "sql") expect(plan.pgTapProofs).toHaveLength(18);
+		if (lane === "sql") expect(plan.pgTapProofs).toHaveLength(19);
 	});
 
 	it.each([
@@ -1416,7 +1416,7 @@ describe("explicit release-gate lanes", () => {
 		const build = result.commands.find(({ command, args }) => command === "pnpm" && args[0] === "build:next");
 		if (build) expect(build.env).not.toHaveProperty("VOTUS_E2E_ANALYZE_PRODUCTION_BUILD");
 		const pgTap = result.trace.filter((phase) => phase.startsWith("pgtap:"));
-		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 18);
+		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 19);
 		if (lane !== "browser") {
 			expect(result.trace.slice(9, 16)).toEqual([
 				"pgtap:non_positive_vote_kinds.sql",
@@ -2186,6 +2186,7 @@ describe("migration release-gate integration", () => {
 		"20261015200000",
 		"20261015300000",
 		"20261016000000",
+		"20261017000000",
 	];
 	it("inspects the exact production migration and proof plan", async () => {
 		const plan = await inspectReleaseGatePlan();
@@ -2198,7 +2199,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(77);
+		).toBe(78);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -2251,6 +2252,11 @@ describe("migration release-gate integration", () => {
 			{
 				path: "tests/workspace_bootstrap_autoselect.sql",
 				label: "disposable workspace-bootstrap-autoselect pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_onboarding.sql",
+				label: "disposable workspace-onboarding pgTAP",
 				timeoutMs: 120_000,
 			},
 			{
@@ -2328,7 +2334,7 @@ describe("migration release-gate integration", () => {
 		);
 		expect(names).toHaveLength(plan.migrationVersions.length);
 		expect(names.at(-1)).toBe(
-			"20261016000000_scope_official_facet_exclusions.sql",
+			"20261017000000_workspace_onboarding_completion.sql",
 		);
 	});
 	it("stages only the idempotent role bootstrap before the ETL-owned migration replay", async () => {
@@ -2410,6 +2416,7 @@ describe("migration release-gate integration", () => {
 			"pgTAP:disposable workspace-administration pgTAP",
 			"pgTAP:disposable workspace-context invalidation pgTAP",
 			"pgTAP:disposable workspace-bootstrap-autoselect pgTAP",
+			"pgTAP:disposable workspace-onboarding pgTAP",
 			"pgTAP:disposable workspace-review-scope pgTAP",
 			"pgTAP:disposable workspace-authorized-facets pgTAP",
 			"pgTAP:disposable workspace-official-internal-lists pgTAP",
@@ -2560,7 +2567,7 @@ describe("migration release-gate integration", () => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
 		).toThrow(
-			"migration inventory must be exactly versions 0001 through 20261015300000 plus 20261016000000",
+			"migration inventory must be exactly versions 0001 through 20261016000000 plus 20261017000000",
 		);
 	});
 	it.each([
@@ -2586,7 +2593,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(18);
+		expect(plan.pgTapProofs).toHaveLength(19);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -2699,11 +2706,12 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("77 as migration_inventory_count");
+		expect(proof).toContain("78 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"20261017000000-down",
 			"20261016000000-down",
 			"20261015300000-down",
 			"20261015200000-down",
@@ -2816,6 +2824,7 @@ describe("migration release-gate integration", () => {
 			"20261015200000-up",
 			"20261015300000-up",
 			"20261016000000-up",
+			"20261017000000-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",

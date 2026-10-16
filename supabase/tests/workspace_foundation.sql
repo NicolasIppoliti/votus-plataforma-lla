@@ -119,7 +119,7 @@ select is(
      and referenced.nspname = 'auth'),
   0::bigint,
   'workspace foundation has no Auth dependencies');
-select is((select array_agg(p.proname order by p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='workspace_api'),array['available_organizations','bootstrap_workspace_context','current_workspace','fiscalizacion_coverage','fiscalizacion_result','invalidate_workspace_context','official_comparison','official_facets','official_internal_lists','official_provenance','official_reference','official_result','official_schools','official_section_circuit_outcomes','official_section_completeness','review_items','switch_workspace_context']::name[],'workspace interface has the exact sixteen claims-bound functions');
+select is((select array_agg(p.proname order by p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='workspace_api'),array['available_organizations','bootstrap_workspace_context','complete_onboarding','current_workspace','fiscalizacion_coverage','fiscalizacion_result','invalidate_workspace_context','official_comparison','official_facets','official_internal_lists','official_provenance','official_reference','official_result','official_schools','official_section_circuit_outcomes','official_section_completeness','review_items','switch_workspace_context']::name[],'workspace interface has the exact seventeen claims-bound functions');
 select ok(
   not has_schema_privilege('service_role', 'workspace_private', 'USAGE')
   and not has_schema_privilege('service_role', 'workspace_api', 'USAGE')

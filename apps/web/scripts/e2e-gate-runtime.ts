@@ -275,6 +275,7 @@ const MIGRATION_VERSIONS = [
 	"20261015200000",
 	"20261015300000",
 	"20261016000000",
+	"20261017000000",
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -382,6 +383,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_bootstrap_autoselect.sql",
 		label: "disposable workspace-bootstrap-autoselect pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_onboarding.sql",
+		label: "disposable workspace-onboarding pgTAP",
 		timeoutMs: 120_000,
 	},
 	{
