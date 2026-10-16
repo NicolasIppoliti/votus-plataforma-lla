@@ -1,7 +1,7 @@
 "use client";
 import { useId } from "react";
 import type { CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
-import { circuitPresentation } from "@/lib/geography/circuit-presentation";
+import { circuitPresentation, circuitWinnerKey } from "@/lib/geography/circuit-presentation";
 import { circuitBandColor, MARGIN_BANDS, NEUTRAL_COLOR, REFERENCE_COLOR, Legend } from "./reference-colors";
 import styles from "./circuit-reference.module.css";
 import { formatFixed2 } from "@/lib/format/number";
@@ -46,7 +46,8 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, highlighted 
       <path d={path(c)} fill={`url(#${hatch})`} fillRule="evenodd" data-hatched="true" />
     </g>}
   </svg><Legend label="Codificación de circuitos" entries={[
-    { label: "Relleno: ganador y margen; neutro sin resultado atribuible", encoding: "fill", color: NEUTRAL_COLOR },
+    ...circuitWinnerKey(circuits).map(({ name, color }) => ({ label: `Ganador: ${name}`, encoding: "fill" as const, color })),
+    { label: "Neutro: empate, sin votos positivos o lista sin mapear", encoding: "fill", color: NEUTRAL_COLOR },
     { label: `Margen sobre votos positivos: claro < ${MARGIN_BANDS.light.below} pp; medio ${MARGIN_BANDS.light.below}–${MARGIN_BANDS.medium.through} pp; intenso > ${MARGIN_BANDS.medium.through} pp`, encoding: "fill", color: REFERENCE_COLOR },
     { label: "Rayado: escrutinio provisorio o superposición en la fuente", encoding: "hatch" },
     { label: "Contorno de referencia CNE", encoding: "outline" },

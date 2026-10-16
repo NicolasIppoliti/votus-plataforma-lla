@@ -36,3 +36,26 @@ describe("reference circuits and presentation", () => {
     expect(circuitPresentation(c).coverage).toBe("provisorio · 99 % de mesas");
   });
 });
+
+describe("legend party key (#614)", () => {
+  const circuit = (code: string, winner: string, name: string): CircuitOutcome => ({ circuito_code: code, positive_total: 100, status: "complete",
+    counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 },
+    parties: [{ identity_status: "canonical", canonical_party_id: winner, display_name: name, list_id: null, votes: 80 },
+      { identity_status: "canonical", canonical_party_id: "runner-up", display_name: "Segundo", list_id: null, votes: 20 }] });
+
+  it("names every winner colour actually drawn, with the drawn swatch, and only those", async () => {
+    const geometry = await loadCircuitGeometry();
+    const circuits = [circuit("00248", "lla", "LA LIBERTAD AVANZA"), circuit("00249", "lla", "LA LIBERTAD AVANZA"), circuit("0248A", "fp", "FUERZA PATRIA")];
+    const html = renderToStaticMarkup(<CircuitReferenceSvg geometry={geometry!} circuits={circuits} selected={null} />);
+    const legend = html.slice(html.indexOf('aria-label="Codificación de circuitos"'));
+    for (const c of circuits.slice(1)) {
+      const color = circuitPresentation(c).color;
+      expect(html).toContain(`fill="${color}"`);
+      expect(legend).toMatch(new RegExp(`background:${color}"></span>Ganador: ${c.parties[0]!.display_name}<`));
+    }
+    expect(legend.match(/Ganador: LA LIBERTAD AVANZA/g)).toHaveLength(1);
+    expect(legend).not.toContain("Ganador: Segundo");
+    expect(legend).not.toContain("Relleno: ganador y margen; neutro sin resultado atribuible");
+    expect(legend).toContain("Neutro: empate, sin votos positivos o lista sin mapear");
+  });
+});
