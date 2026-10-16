@@ -997,6 +997,6 @@ test("an unknown route answers with the Spanish not-found page (#600)", async ({
     const response = await page.goto("/ruta-que-no-existe");
     expect(response?.status()).toBe(404);
     await expect(page.getByRole("heading", { level: 1, name: "Página no encontrada", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Volver a Panorama", exact: true })).toHaveAttribute("href", "/");
+    await expect(page.getByRole("link", { name: "Volver al inicio", exact: true })).toHaveAttribute("href", "/");
   });
 });

@@ -36,11 +36,14 @@ describe("recoverable boundaries above the authenticated layout (#600)", () => {
     expect(html).not.toContain("123abc");
   });
 
-  it("not found: Spanish page with a way back to Panorama", async () => {
+  it("not found: Spanish page with a way back home, free of in-scope words", async () => {
     const { default: NotFound } = await import("./not-found");
     const html = renderToStaticMarkup(<NotFound />);
     expect(html).toContain("<h1>Página no encontrada</h1>");
     expect(html).toContain('href="/"');
-    expect(html).toContain("Volver a Panorama");
+    expect(html).toContain("Volver al inicio");
+    // auth.spec.ts: the root not-found ships in every page payload, including
+    // the anonymous login, so it must not carry in-scope words such as Panorama.
+    expect(html).not.toContain("Panorama");
   });
 });
