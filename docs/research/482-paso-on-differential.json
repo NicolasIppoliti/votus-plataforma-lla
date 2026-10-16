@@ -1,0 +1,127 @@
+{
+  "python": "3.13.12",
+  "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+  "archive_sha256": "25558e7b73e8c273726ea12f04040e2fac8e693ad0eb866386502eb112bd2c0c",
+  "source": "national/2023-paso-wayback",
+  "fast_path": "on",
+  "extraction_directory": "/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-worktrees/m482/docs/research/482-extracted-paso",
+  "conditions": "fresh subprocesses; warm/uncontrolled OS cache; no metrics in timed runs; companion when present; extraction/imports excluded; no DB",
+  "runs": [
+    {
+      "wall_seconds": 281.15886062500067,
+      "cpu_seconds": 274.30195,
+      "peak_rss_bytes": 4634296320,
+      "rows": 16600877,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 289.21160220797174,
+      "cpu_seconds": 282.96135599999997,
+      "peak_rss_bytes": 3634626560,
+      "rows": 16600877,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 282.146674958989,
+      "cpu_seconds": 277.400081,
+      "peak_rss_bytes": 4096966656,
+      "rows": 16600877,
+      "parser_scans": 2
+    }
+  ],
+  "medians": {
+    "wall_seconds": 282.146674958989,
+    "cpu_seconds": 277.400081,
+    "peak_rss_bytes": 4096966656
+  },
+  "ranges": {
+    "wall_seconds": [
+      281.15886062500067,
+      289.21160220797174
+    ],
+    "cpu_seconds": [
+      274.30195,
+      282.96135599999997
+    ],
+    "peak_rss_bytes": [
+      3634626560,
+      4634296320
+    ]
+  },
+  "parity": {
+    "rows": 16600877,
+    "ordered_rows_sha256": "34abad27e499358ee584e9a1952344a440184c86af26d8f0ddb4f2b79634efc1",
+    "completeness_sha256": "cd179d5bcd87f317a70e9ddac9e5a2f38c67cc1ba362480c9f4bd83f00349379",
+    "metrics_sha256": "92fee3d2639463d0a57e204ef7fd3d2c86318b2b8a9865eac98644cf987b1214",
+    "status": {
+      "status": "failed",
+      "first_pass": "complete",
+      "iteration": "complete",
+      "commit_returned": false
+    },
+    "status_sha256": "928812613379820f49133f87139cf48a3ceac937fa57f4fabceb7899cbcd462d",
+    "exclusion_breakdown": {
+      "exclusions": {},
+      "categories": {
+        "PRESIDENTE/A": {
+          "records_seen": 3114677,
+          "rows_emitted": 3114677,
+          "exclusions": {}
+        },
+        "DIPUTADOS/AS NACIONALES": {
+          "records_seen": 2728753,
+          "rows_emitted": 2728753,
+          "exclusions": {}
+        },
+        "PARLAMENTO MERCOSUR REGIONAL": {
+          "records_seen": 2895519,
+          "rows_emitted": 2895519,
+          "exclusions": {}
+        },
+        "SENADORES/AS PROVINCIALES": {
+          "records_seen": 590096,
+          "rows_emitted": 590096,
+          "exclusions": {}
+        },
+        "DIPUTADOS/AS PROVINCIALES": {
+          "records_seen": 626402,
+          "rows_emitted": 626402,
+          "exclusions": {}
+        },
+        "SENADORES/AS NACIONALES": {
+          "records_seen": 1751578,
+          "rows_emitted": 1751578,
+          "exclusions": {}
+        },
+        "GOBERNADOR/A": {
+          "records_seen": 1233990,
+          "rows_emitted": 1233990,
+          "exclusions": {}
+        },
+        "PARLAMENTO MERCOSUR NACIONAL": {
+          "records_seen": 2659326,
+          "rows_emitted": 2659326,
+          "exclusions": {}
+        },
+        "INTENDENTE/A": {
+          "records_seen": 984431,
+          "rows_emitted": 984431,
+          "exclusions": {}
+        },
+        "CONCEJAL": {
+          "records_seen": 16105,
+          "rows_emitted": 16105,
+          "exclusions": {}
+        }
+      },
+      "ambiguous_categories": {},
+      "companion_conflicts": null
+    },
+    "exclusions_sha256": "c262a7a0c9ec93981c04a5ded7ee0593349c826529c78ae5652e4388ce88c307",
+    "quarantine_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "completeness_status_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "parser_scans": 2,
+    "total_scans_with_completeness": 2
+  }
+}
