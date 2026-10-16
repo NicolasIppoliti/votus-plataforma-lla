@@ -29,6 +29,22 @@ for (const width of [320, 390]) {
             const picker = pickers.nth(index);
             if (!await picker.evaluate(element => (element as HTMLDetailsElement).open)) await picker.locator(":scope > summary").click();
           }
+          if (route === "/drilldown") {
+            // #501: Exploración folds the shared bar (its page form repeats it) so the
+            // map follows the compact page controls; the summary keeps the values and source.
+            const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+            const fold = bar.locator("details.electoral-context__fold");
+            await expect(fold).not.toHaveAttribute("open", "");
+            await expect(fold.locator(":scope > summary")).toContainText("Fuente: Oficial");
+            const map = page.getByRole("region", { name: "Mapa territorial de referencia", exact: true });
+            const controls = page.getByRole("region", { name: "Filtros de exploración", exact: true });
+            await expect(bar.getByText("Cargando contexto autorizado…")).toHaveCount(0);
+            const [barBox, controlsBox, mapBox] = await Promise.all([bar.boundingBox(), controls.boundingBox(), map.boundingBox()]);
+            expect(barBox!.height).toBeLessThanOrEqual(120);
+            expect(controlsBox!.y).toBeGreaterThanOrEqual(barBox!.y + barBox!.height);
+            expect(mapBox!.y).toBeGreaterThanOrEqual(controlsBox!.y + controlsBox!.height);
+            await fold.locator(":scope > summary").click();
+          }
           if (["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"].includes(route)) {
             await expect(page.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true })).toBeVisible();
           }

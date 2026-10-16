@@ -12,6 +12,7 @@ import { loadContextOptions } from "./context-actions";
 /** Data routes expose electoral selections. Scenarios, evidence and review are
  * workflow/catalog routes, not result selections. Descendants inherit the bar.
  * Page-local forms deliberately remain until #436–#440. */
+const SOURCE_LABELS = { official: "Oficial", fiscalizacion: "Fiscalización — no oficial (opt-in)" } as const;
 const DATA_ROUTES = ["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"];
 export function ElectoralContextBar() {
   const pathname = usePathname();
@@ -74,14 +75,32 @@ function ContextControls() {
   function selector(label: string, key: keyof ElectoralContext, options: { value: string; label: string }[]) {
     return <label className="electoral-context__field">{label}<ResponsiveSelect aria-label={`Contexto electoral: ${label}`} value={String(context[key] ?? "")} disabled={!facets || parsed.status !== "ok"} onChange={event => change(key, event.target.value)}><option value="">Seleccionar</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</ResponsiveSelect></label>;
   }
-  return <section ref={barRef} aria-label="Contexto electoral" className="electoral-context shell-container" data-source={context.sourceKind}>
+  const controls = <>
     {selector("Elección", "electionId", facets?.elections.map(item => ({ value: item.id, label: item.label })) ?? [])}
     {selector("Categoría", "categoryId", facets?.categories.map(item => ({ value: item.id, label: item.name })) ?? [])}
     <fieldset><legend>Territorio</legend>
       {selector("Distrito", "distritoCode", facets?.distritos.map(item => ({ value: item.code, label: formatFacetOptionLabel(item) })) ?? [])}
       {selector("Sección", "seccionCode", facets?.secciones.map(item => ({ value: item.code, label: formatFacetOptionLabel(item) })) ?? [])}
     </fieldset>
-    <label className="electoral-context__field">Fuente<ResponsiveSelect aria-label="Contexto electoral: Fuente" value={context.sourceKind} disabled={parsed.status !== "ok"} onChange={event => change("sourceKind", event.target.value)}><option value="official">Oficial</option><option value="fiscalizacion">Fiscalización — no oficial (opt-in)</option></ResponsiveSelect></label>
+    <label className="electoral-context__field">Fuente<ResponsiveSelect aria-label="Contexto electoral: Fuente" value={context.sourceKind} disabled={parsed.status !== "ok"} onChange={event => change("sourceKind", event.target.value)}><option value="official">{SOURCE_LABELS.official}</option><option value="fiscalizacion">{SOURCE_LABELS.fiscalizacion}</option></ResponsiveSelect></label>
+  </>;
+  const optionLabel = <T,>(items: T[] | undefined, match: (item: T) => boolean, label: (item: T) => string) => {
+    const item = items?.find(match);
+    return item ? label(item) : undefined;
+  };
+  const values = [
+    optionLabel(facets?.elections, item => item.id === context.electionId, item => item.label),
+    optionLabel(facets?.categories, item => item.id === context.categoryId, item => item.name),
+    optionLabel(facets?.distritos, item => item.code === context.distritoCode, formatFacetOptionLabel),
+    optionLabel(facets?.secciones, item => item.code === context.seccionCode, formatFacetOptionLabel),
+    `Fuente: ${SOURCE_LABELS[context.sourceKind]}`,
+  ].filter(Boolean).join(" · ");
+  return <section ref={barRef} aria-label="Contexto electoral" className="electoral-context shell-container" data-source={context.sourceKind}>
+    {/* Exploración's own scope form repeats these controls; on phones fold the
+        shared copy behind its values so the map is not pushed down (#501). */}
+    {pathname === "/drilldown"
+      ? <details className="electoral-context__fold"><summary><strong>Contexto electoral</strong> <span>{values}</span></summary><div className="electoral-context__controls">{controls}</div></details>
+      : controls}
     {context.sourceKind === "fiscalizacion" && <Alert variant="caveat" presentation="inline">Fiscalización: fuente no oficial. No se combina con resultados oficiales.</Alert>}
     {parsed.status !== "ok" ? <Alert variant="error" presentation="inline">Contexto inválido: {parsed.reason}</Alert> : loaded?.query === query && !result ? <Alert variant="unavailable" presentation="inline">No se pudo verificar el contexto autorizado.</Alert> : !facets ? <p role="status">Cargando contexto autorizado…</p> : null}
     <noscript>Los formularios de cada página siguen disponibles sin JavaScript.</noscript>

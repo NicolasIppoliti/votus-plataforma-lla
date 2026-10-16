@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   effects: [] as Array<() => void | (() => void)>,
   load: vi.fn(),
   loaded: null as unknown,
+  pathname: "/fiscalizacion",
 }));
 vi.mock("react", async original => ({
   ...await original<typeof import("react")>(),
@@ -18,7 +19,7 @@ vi.mock("react", async original => ({
   useState: (initial: unknown) => [state.loaded ?? initial, vi.fn()],
 }));
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/fiscalizacion",
+  usePathname: () => state.pathname,
   useSearchParams: () => new URLSearchParams(state.query),
   useRouter: () => ({ push: state.push, replace: state.replace, refresh: state.refresh }),
 }));
@@ -30,6 +31,7 @@ beforeEach(() => {
   state.effects.length = 0;
   state.bar = null;
   state.loaded = null;
+  state.pathname = "/fiscalizacion";
   state.query = "electionId=explicit-page-election&categoryId=explicit-category&sourceKind=fiscalizacion";
 });
 
@@ -111,4 +113,37 @@ it("measures both sticky rows, updates on resize, and clears offsets on unmount"
     expect(style.removeProperty).toHaveBeenCalledWith("--electoral-context-height");
     expect(style.removeProperty).toHaveBeenCalledWith("--electoral-topbar-height");
   } finally { vi.unstubAllGlobals(); }
+});
+
+const DRILLDOWN_QUERY = "electionId=e2025&categoryId=c-concejales&distritoCode=02&seccionCode=027&sourceKind=fiscalizacion";
+const DRILLDOWN_RESULT = {
+  context: { electionId: "e2025", categoryId: "c-concejales", distritoCode: "02", seccionCode: "027", sourceKind: "fiscalizacion" },
+  facets: {
+    elections: [{ id: "e2025", label: "2025 provinciales" }],
+    categories: [{ id: "c-concejales", name: "CONCEJALES" }],
+    distritos: [{ code: "02", name: "Buenos Aires", nameStatus: "present", nameVariantCount: 1 }],
+    secciones: [{ code: "027", name: "Coronel de Marina L. Rosales", nameStatus: "present", nameVariantCount: 1 }],
+  },
+};
+
+it("folds the shared bar behind a value summary on Exploración, keeping every control in the DOM and the source caveat outside the fold", () => {
+  state.pathname = "/drilldown";
+  state.query = DRILLDOWN_QUERY;
+  state.loaded = { query: state.query, result: DRILLDOWN_RESULT };
+  const markup = renderToStaticMarkup(<ElectoralContextBar />);
+  const fold = markup.match(/<details class="electoral-context__fold">([\s\S]*?)<\/details>/)?.[1];
+  expect(fold).toBeDefined();
+  const summary = fold!.match(/<summary[^>]*>([\s\S]*?)<\/summary>/)?.[1]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  expect(summary).toBe("Contexto electoral 2025 provinciales · CONCEJALES · 02 — Buenos Aires · 027 — Coronel de Marina L. Rosales · Fuente: Fiscalización — no oficial (opt-in)");
+  for (const label of ["Elección", "Categoría", "Distrito", "Sección", "Fuente"]) expect(fold).toContain(`aria-label="Contexto electoral: ${label}"`);
+  const after = markup.slice(markup.indexOf("</details>"));
+  expect(after).toContain("Fiscalización: fuente no oficial. No se combina con resultados oficiales.");
+  expect(fold).not.toContain("Fiscalización: fuente no oficial.");
+});
+
+it("keeps the shared bar unfolded on every other data route", () => {
+  for (const pathname of ["/", "/compare", "/municipal", "/fiscalizacion", "/simulate"]) {
+    state.pathname = pathname;
+    expect(renderToStaticMarkup(<ElectoralContextBar />)).not.toContain("<details");
+  }
 });

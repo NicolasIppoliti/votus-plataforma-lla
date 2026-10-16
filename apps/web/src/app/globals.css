@@ -451,6 +451,22 @@ html:has(.electoral-context) {
 .electoral-context[data-source="fiscalizacion"] { border-inline-start: 0.35rem solid #a65300; }
 .electoral-context > [role="alert"], .electoral-context > p { flex-basis: 100%; }
 
+/* Exploración folds the shared bar on phones (its page form repeats it).
+   Wider screens unfold it in place; without ::details-content support the
+   summary stays usable instead of hiding the controls. */
+.electoral-context__fold { flex-basis: 100%; min-width: 0; }
+.electoral-context__fold > summary { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; min-height: 2.75rem; align-items: center; cursor: pointer; }
+.electoral-context__fold > summary span { color: var(--muted-ink); overflow-wrap: anywhere; }
+.electoral-context__controls { display: flex; flex-wrap: wrap; gap: 0.75rem; padding-block-start: 0.75rem; }
+@supports selector(::details-content) {
+  @media (min-width: 761px) {
+    .electoral-context__fold { display: contents; }
+    .electoral-context__fold::details-content { display: contents; content-visibility: visible; }
+    .electoral-context__fold > summary { display: none; }
+    .electoral-context__controls { display: contents; }
+  }
+}
+
 /* At narrow widths/native zoom the wrapped rows can consume the viewport.
    Scroll padding cannot make an oversized sticky stack leave room for targets.
    Keep every control in flow and reachable; retain pinning on roomy screens. */
