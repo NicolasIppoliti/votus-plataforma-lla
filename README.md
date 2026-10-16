@@ -263,7 +263,10 @@ The workflow remains authoritative for job prerequisites and scope selection. It
 ### Integration branch
 
 Day-to-day work merges into `develop`; a feature reaches `main` through one
-`develop` → `main` pull request.
+`develop` → `main` pull request. Issues travel in batches: one branch per theme
+with one commit per issue, one pull request per batch into `develop`, merged with a
+merge commit so each issue keeps its own commit. One batch costs one pull-request
+run and one full `develop` run instead of one per issue.
 
 | Event | Gates |
 | --- | --- |
