@@ -28,6 +28,32 @@ new work, then use the numbered rules as repository-specific rejection criteria.
 - Make architectural decisions for the long term. Reject stopgaps whose intended future
   replacement is already known.
 
+## Branching, CI and delivery
+
+`develop` is the integration branch; `main` only receives releases from it. The full
+flow and gate table live in README.md, "Integration branch".
+
+- Branch every change from `origin/develop` and open its pull request **into `develop`**,
+  never into `main`. Squash-merge it once its CI is green.
+- Pull requests into `develop` run only `web-static` and/or `etl-release`; the browser
+  and SQL E2E lanes run on pushes to `develop` and on the `develop` → `main` pull
+  request. Before asking for that release PR, the latest `develop` push must be green.
+- When `develop` turns red, fixing it comes before merging anything else into it.
+  Diagnose from the run's E2E diagnostics and `review-focus-geometry` artifacts; CI
+  redacts values, so add failure-only `e2e-facts-*.json` facts instead of guessing.
+- Reproduce browser failures locally with
+  `pnpm --dir apps/web test:e2e:focused e2e/<spec>.spec.ts` (one run at a time; it owns a
+  disposable Supabase stack). Run ETL tests with the pinned uv (`uvx uv@<pin> run pytest`,
+  pin in `mise.toml`).
+- Never push directly to `main` or `develop`, never force-push a shared branch, and do
+  not use `gh pr merge --delete-branch` from a worktree: it removes that worktree.
+- The workflow is pinned by contract tests (`apps/web/e2e/ci-path-scope.test.ts`,
+  `apps/web/e2e/release-gate-safety.test.ts`,
+  `etl/tests/test_release_workflow_supply_chain.py`); change them together with
+  `.github/workflows/release-gates.yml`.
+- Vercel deploys only `main` and `develop` (`apps/web/vercel.json`); pull requests get
+  no preview deployments.
+
 ## 1. Reachability is a separate property from correctness
 
 The recurring defect here is **correct, tested, unreachable code**. It has happened at
