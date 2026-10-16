@@ -2,12 +2,16 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
+import { writeWorkspaceStateFacts } from "./workspace-state-facts";
 import { alignedOccupiedGeometry, type Raster } from "./map-raster";
 import { comparisonFixture, withResultFixture } from "./result-fixture";
 import { withAuthorizedComparisonWorkspace } from "./authorized-comparison-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
 const environment = assertE2eEnvironment(process.env), SPEC = "e2e/comparison.spec.ts";
 const { identity, seed } = comparisonFixture(SPEC), baseURL = scenarioBaseUrl(SPEC, environment);
+function workspaceControls(page: Page): Locator {
+  return page.getByRole("banner");
+}
 async function writeSignInFailureFacts(page: Page): Promise<string> {
   const path = test.info().outputPath("e2e-facts-sign-in.json");
   const facts = await page.evaluate(() => ({
@@ -27,7 +31,7 @@ test.describe("authorized official comparison", () => {
   test("real sign-in resumes exact exploration/comparison and rechecks revoked access", async ({ page, context }) => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
       await page.setViewportSize({ width: 1440, height: 1000 });
-      const organization = await page.getByRole("combobox", { name: "Organización", exact: true }).inputValue();
+      const organization = await workspaceControls(page).getByRole("combobox", { name: "Organización", exact: true }).inputValue();
       const common = { electionId: identity.electionIds[0]!, categoryId: identity.categoryId,
         distritoCode: identity.distritoCode, seccionCode: identity.seccionCode, sourceKind: "official" };
       const exploration = `/drilldown?${new URLSearchParams({ ...common, level: "seccion" })}`;
@@ -55,10 +59,10 @@ test.describe("authorized official comparison", () => {
         await page.getByRole("button", { name: "Iniciar sesión" }).click();
         await expect(page).toHaveURL(new URL(destination, baseURL).toString());
         // Fresh sessions may require the existing authorized workspace prerequisite.
-        const selector = page.getByRole("combobox", { name: "Organización", exact: true });
+        const selector = workspaceControls(page).getByRole("combobox", { name: "Organización", exact: true });
         await selector.selectOption(organization);
         const switched = page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspace" && response.request().method() === "POST");
-        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        await workspaceControls(page).getByRole("button", { name: "Cambiar organización" }).click();
         expect((await switched).ok()).toBe(true);
         await expect(page).toHaveURL(new URL(destination, baseURL).toString());
       };
@@ -69,10 +73,18 @@ test.describe("authorized official comparison", () => {
       await revokeAuthorization();
       await resume(comparison);
       const main = page.getByRole("main");
-      await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await writeWorkspaceStateFacts(page, test.info(), "comparison-revoked-before-denial");
+      try {
+        // Revoked section entitlements remove the elections from authorized
+        // facets before the comparison evidence RPC can be reached.
+        await expect(main.getByRole("alert")).toHaveText("La elección seleccionada no pertenece al año y alcance autorizados.");
+      } catch (error) {
+        await writeWorkspaceStateFacts(page, test.info(), "comparison-revoked-denial-failed").catch(() => {});
+        throw error;
+      }
       await expect(main.getByRole("table")).toHaveCount(0);
       for (const archive of identity.archiveEntryIds) await expect(main).not.toContainText(archive);
-      await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
+      await expect(workspaceControls(page).getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
     }));
   });
   for (const width of [1440, 390]) {
@@ -598,7 +610,17 @@ test.describe("authorized official comparison", () => {
       await expect(page).toHaveURL(servedUrl.toString());
       await expect(sharedSection).toHaveValue(identity.seccionCode);
       await openChart(); await expect(chart).toBeVisible();
-      await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await revokeAuthorization();
+      await page.reload();
+      await expect(page).toHaveURL(servedUrl.toString());
+      // Revoking entitlements increments the organization revision: the workspace
+      // becomes stale, so #427's preflight replaces data with inline reselection.
+      const recovery = main.getByRole("region", { name: "Selección de organización", exact: true });
+      await expect(recovery).toBeVisible();
+      await expect(main.getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
+      await expect(recovery.getByRole("status").filter({ hasText: /^Tu acceso a la organización activa cambió\./ })).toBeVisible();
+      await expect(recovery.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
+      await expect(recovery.getByRole("button", { name: "Cambiar organización", exact: true })).toBeVisible();
       await expect(chart).toHaveCount(0); await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");
     }));

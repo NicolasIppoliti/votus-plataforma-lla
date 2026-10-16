@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { RosalesAdministrativeDetails, RosalesTerritoryName } from "@/components/RosalesAdministrativeContext";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
@@ -439,6 +441,8 @@ interface MunicipalPageProps {
 export default async function MunicipalPage({
   searchParams,
 }: MunicipalPageProps): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Municipal (Concejales)" />;
   const params = await searchParams;
   const context = parseElectoralContext(params);
   const selectedYear: MunicipalYear = params.year === "2023" || (context.status === "ok" && context.value.electionId !== undefined && context.value.electionId === process.env["MUNICIPAL_2023_ELECTION_ID"]) ? 2023 : 2025;

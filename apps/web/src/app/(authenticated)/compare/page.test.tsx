@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { comparisonFixture } from "../../../../e2e/result-fixture";
 import type { ReactElement } from "react";
+
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 import { ComparisonMapView, type MapMetric } from "./ComparisonMap";
 import type { UnitSwing } from "@/lib/results/compare";
 import { renderToStaticMarkup } from "react-dom/server";

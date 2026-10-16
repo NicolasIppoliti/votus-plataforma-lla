@@ -1,4 +1,6 @@
 import type { ReactElement } from "react";
+
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import ReviewPage from "./page";

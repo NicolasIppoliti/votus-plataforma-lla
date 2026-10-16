@@ -386,7 +386,8 @@ zoomTest.describe("national reference at native 200% zoom", () => {
     } catch (error) {
       try {
         const trigger = page.getByRole("button", { name: "Abrir navegación" });
-        const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+        const workspaceControls = await trigger.isVisible() ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
+        const organization = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
         await writeFile(testInfo.outputPath("national-native-failure.json"), JSON.stringify({
           pathname: new URL(page.url()).pathname, errorName: error instanceof Error ? error.name : "unknown",
           mobileTriggerVisible: await trigger.isVisible(),
@@ -525,11 +526,12 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         const trigger = page.getByRole("button", { name: "Abrir navegación" });
         const mobile = await trigger.isVisible();
         if (mobile) await trigger.click();
-        const selector = page.getByRole("combobox", { name: "Organización", exact: true });
+        const workspaceControls = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
+        const selector = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
         await expect(selector).toBeVisible();
         await selector.selectOption(fixture.organization_id);
         const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        await workspaceControls.getByRole("button", { name: "Cambiar organización" }).click();
         const response = await switched;
         expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
         if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();

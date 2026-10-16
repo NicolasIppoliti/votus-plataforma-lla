@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import Page from "./page";
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 
 const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));
 vi.mock("server-only", () => ({}));

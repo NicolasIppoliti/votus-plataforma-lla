@@ -58,7 +58,7 @@ test("first-run: a fresh sole-organization user reaches Rosales results in three
       await expect(page).toHaveURL(new URL("/", baseURL).toString());
       const main = page.getByRole("main");
       await expect(main.getByRole("heading", { level: 1, name: "Panorama", exact: true })).toBeVisible();
-      const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+      const organization = page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true });
       await expect(organization).toHaveValue(fixture.organization_id);
       await expect(organization.locator('option:not([value=""])')).toHaveCount(1);
       const summary = main.getByRole("complementary", { name: "Lectura de la selección" });
@@ -248,7 +248,9 @@ nextTest("retries unavailable municipal evidence with the exact configured reque
 
 test.describe("the municipal route requires workspace-authorized official results", () => {
   test("test_route_is_reachable_and_fails_closed_without_workspace_entitlement", async ({ page }) => {
-    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
+    // Select a valid workspace for a different section. An unselected workspace
+    // now exercises #427's recovery state, not the municipal entitlement guard.
+    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
       await page.goto(new URL("/", baseURL).toString());
       const municipalNavigationLink = page
         .getByRole("navigation", { name: "principal" })
@@ -278,7 +280,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText(formatCount(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText("party-internal, unofficial");
-    });
+    }, "028"));
   });
 
   test("test_authorized_workspace_section_map_keyboard_activation_and_exact_results_focus", async ({ page }) => {

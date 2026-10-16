@@ -1,4 +1,6 @@
 import type { ReactElement } from "react";
+
+vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import { loadAuthorizedOfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";

@@ -1,5 +1,26 @@
 # Operate the results explorers safely
 
+## Seleccionar la organización de trabajo
+
+En Panorama (`/`), Exploración (`/drilldown`), Comparación (`/compare`), Municipal
+(`/municipal`), Fiscalización (`/fiscalizacion`) y Revisión (`/review`), si todavía
+no elegiste una organización, aparece **Seleccioná una organización** dentro de
+la página. Elegí una organización autorizada y pulsá **Cambiar organización**:
+la página vuelve a consultar los datos sin perder su URL ni sus filtros.
+Se reutiliza el mismo selector y la misma acción de cambio del espacio de trabajo;
+el selector de navegación no se mueve.
+
+Si cambian los permisos de la organización activa, el contexto queda desactualizado:
+los datos se retiran y aparece el mismo selector dentro de la página, con el aviso
+**Tu acceso a la organización activa cambió**. Elegir nuevamente una organización
+no restaura permisos revocados; las consultas siguen sujetas al alcance autorizado.
+
+La falta de selección no significa falta de autorización. El acceso denegado,
+el contexto vencido o revocado y la imposibilidad temporal de verificar la
+organización muestran mensajes distintos. Si el contexto venció, volvé a iniciar
+sesión; si el servicio no está disponible, intentá de nuevo más tarde. Si no hay
+organizaciones disponibles, el estado lo indica sin mostrar cifras.
+
 ## Publication and deployment boundary
 
 Migration `0027_optimize_non_official_source_audit.sql` is published by the issue #53 base change. This issue #54 follow-up adds no migration: it independently proves the existing partial index for the coverage RPC and does not change an explorer function, grant, result, timeout, or web application behavior. Repository publication is not the same as applying 0027 to a hosted database.
