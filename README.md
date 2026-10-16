@@ -51,7 +51,9 @@ pnpm --dir apps/web toolchain:check
 `toolchain:check` compara las versiones realmente ejecutadas de Node, pnpm,
 Python y uv con mise, y la CLI de Supabase con su devDependency del paquete web.
 Ante diferencias o herramientas ausentes, falla con una indicación para corregirlas.
-Supabase se instala con pnpm, no con mise. El chequeo completo usa `--scope all`
+Supabase se instala con pnpm, no con mise. El stack local de Supabase deja
+apagados Realtime, Storage, Edge Functions y Analytics (Votus no los usa); tras
+cambiar `supabase/config.toml`, reiniciá con `supabase stop && supabase start`. El chequeo completo usa `--scope all`
 por defecto; `--scope web` comprueba Node/pnpm/Supabase y `--scope etl`
 Node/pnpm/Python/uv. Los gates web y la verificación ETL ejecutan primero su
 scope correspondiente, también en CI: los jobs web no instalan Python ni uv.
@@ -257,6 +259,22 @@ The workflow remains authoritative for job prerequisites and scope selection. It
 - **E2E release:** `test:e2e:gate` owns the isolated stack, SQL proofs and browser run.
 - **Focused feedback:** `test:e2e:focused` selects canonical browser specs; it is
   not a replacement for the full release gate.
+
+### Integration branch
+
+Day-to-day work merges into `develop`; a feature reaches `main` through one
+`develop` → `main` pull request.
+
+| Event | Gates |
+| --- | --- |
+| Pull request into `develop` | `web-static` and/or `etl-release` by changed paths; no browser or SQL E2E lanes |
+| Push to `develop` or `main` | All gates |
+| Pull request into `main` | Full gates by changed paths |
+
+A newer commit cancels an in-flight run on the same pull request or on
+`develop`; runs on `main` always finish. When `develop` turns red, fixing it
+comes before merging anything else into it. Vercel deploys only `main` and
+`develop` (`apps/web/vercel.json`).
 
 A development server, a standalone unit test, or a successful local build is not
 proof that all CI gates passed. Local proofs also do not establish deployed

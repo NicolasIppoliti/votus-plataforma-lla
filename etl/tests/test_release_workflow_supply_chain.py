@@ -100,21 +100,34 @@ def test_review_diagnostic_upload_is_failure_only_and_narrowly_scoped() -> None:
         "python": "${{ steps.publish.outputs.python }}",
     }
     assert aggregate["env"]["SCOPE_GATES"] == "${{ needs.scope.outputs.gates }}"
+    assert aggregate["env"]["BASE_REF"] == "${{ github.base_ref }}"
     # Runtime permutations are exercised by the web workflow-boundary tests.
     assert aggregate["steps"][0]["shell"] == "bash"
     assert (
         aggregate["steps"][0]["run"]
         == """\
 test "$SCOPE_RESULT" = "success"
-case "$SCOPE_GATES" in
-  '["web-static","etl-release","e2e-release"]')
-    web=success; etl=success; e2e=success ;;
-  '["etl-release"]')
-    web=skipped; etl=success; e2e=skipped ;;
-  '["web-static","e2e-release"]')
-    web=success; etl=skipped; e2e=success ;;
-  *) echo "Invalid scope gates" >&2; exit 1 ;;
-esac
+if [ "$BASE_REF" = "develop" ]; then
+  case "$SCOPE_GATES" in
+    '["web-static","etl-release"]')
+      web=success; etl=success; e2e=skipped ;;
+    '["etl-release"]')
+      web=skipped; etl=success; e2e=skipped ;;
+    '["web-static"]')
+      web=success; etl=skipped; e2e=skipped ;;
+    *) echo "Invalid scope gates" >&2; exit 1 ;;
+  esac
+else
+  case "$SCOPE_GATES" in
+    '["web-static","etl-release","e2e-release"]')
+      web=success; etl=success; e2e=success ;;
+    '["etl-release"]')
+      web=skipped; etl=success; e2e=skipped ;;
+    '["web-static","e2e-release"]')
+      web=success; etl=skipped; e2e=success ;;
+    *) echo "Invalid scope gates" >&2; exit 1 ;;
+  esac
+fi
 test "$WEB_STATIC_RESULT" = "$web"
 test "$ETL_RELEASE_RESULT" = "$etl"
 test "$E2E_RELEASE_RESULT" = "$e2e"
