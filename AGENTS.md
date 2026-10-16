@@ -35,6 +35,10 @@ flow and gate table live in README.md, "Integration branch".
 
 - Branch every change from `origin/develop` and open its pull request **into `develop`**,
   never into `main`. Squash-merge it once its CI is green.
+- GitHub auto-closes issues only on the default branch, so `Closes #<n>` does not fire
+  for pull requests into `develop`. Right after the squash-merge, close each resolved
+  issue yourself with a comment naming the `develop` commit:
+  `gh issue close <n> --comment "Resolved in develop by <sha> (#<pr>)."`
 - Pull requests into `develop` run only `web-static` and/or `etl-release`; the browser
   and SQL E2E lanes run on pushes to `develop` and on the `develop` → `main` pull
   request. Before asking for that release PR, the latest `develop` push must be green.
