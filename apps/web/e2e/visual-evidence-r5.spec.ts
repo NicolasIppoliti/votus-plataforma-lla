@@ -10,6 +10,7 @@ import { comparisonFixture, coverageFixture, sourceIsolationFixture, withResultF
 import { withPanoramaResults } from "./panorama-result-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
 import { assertE2eEnvironment } from "./gate-contract";
+import { expectFullSelectedValues } from "./visual-evidence-r5-selected-values";
 
 const environment = assertE2eEnvironment(process.env);
 // Each test includes fixture ownership, two full-page captures and pair rendering.
@@ -97,6 +98,11 @@ async function capture(page: Page, file: string): Promise<Measurement> {
         if (position === "sticky") {
           element.style.setProperty("position", "static", "important");
         }
+      }
+      // CI captures showed the fixed skip link painted mid-page despite the
+      // blur below. It is not page content; hide it for the capture only.
+      for (const link of document.querySelectorAll<HTMLElement>(".skip-link")) {
+        link.style.setProperty("visibility", "hidden", "important");
       }
     });
   }
@@ -282,6 +288,7 @@ for (const pair of pairs) {
         expect(failures).toEqual([]);
         measurements.push(await capture(prototype, `prototype-${pair.name}-${width}.png`));
         await production(page, pair.route, async () => {
+          if (width <= 390 && ["/evidencia", "/compare"].includes(pair.route)) await expectFullSelectedValues(page);
           measurements.push(await capture(page, `production-${pair.name}-${width}.png`));
         });
         await renderPair(browser, pair.name, width);
