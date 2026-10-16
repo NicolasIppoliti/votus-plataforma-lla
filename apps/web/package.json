@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "toolchain:check": "node --experimental-strip-types ./scripts/toolchain-check.ts",
+    "db:drift": "node --experimental-strip-types ./scripts/db-drift.ts",
     "test:e2e:gate": "pnpm toolchain:check --scope web && node --experimental-strip-types ./scripts/e2e-release-gate.ts",
     "test:e2e:focused": "pnpm toolchain:check --scope web && node --experimental-strip-types ./scripts/e2e-release-gate.ts --focused",
     "verify:etl-isolated": "pnpm toolchain:check --scope etl && node --experimental-strip-types ./scripts/etl-verification.ts",
