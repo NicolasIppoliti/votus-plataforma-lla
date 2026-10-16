@@ -18,7 +18,7 @@ APPROVED_NODE24_ACTION_REFS = {
     "pnpm/action-setup": ("fc06bc1257f339d1d5d8b3a19a8cae5388b55320", 3),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", 1),
     "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 3),
-    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2),
+    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 3),
 }
 _LINE = object()
 
@@ -127,7 +127,23 @@ test "$E2E_SQL_RESULT" = "$e2e"
         for index, step in enumerate(job["steps"])
         if step.get("uses", "").startswith("actions/upload-artifact@")
     ]
-    assert len(uploads) == 2
+    assert len(uploads) == 3
+    visual_job, _, visual = uploads[2]
+    assert visual_job == "e2e-release"
+    assert visual["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert visual["if"] == "${{ !cancelled() }}"
+    assert visual["with"] == {
+        "name": "visual-evidence-r5",
+        "path": (
+            "apps/web/test-results/**/prototype-*-*.png\n"
+            "apps/web/test-results/**/production-*-*.png\n"
+            "apps/web/test-results/**/pair-*-*.png\n"
+            "apps/web/test-results/**/visual-evidence-r5-heights.json\n"
+        ),
+        "retention-days": 14,
+        "if-no-files-found": "error",
+        "include-hidden-files": False,
+    }
     evidence_job, _, evidence = uploads[1]
     assert evidence_job == "e2e-release"
     assert evidence["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"

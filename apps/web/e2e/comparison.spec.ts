@@ -4,46 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { alignedOccupiedGeometry, type Raster } from "./map-raster";
 import { comparisonFixture, withResultFixture } from "./result-fixture";
-import type { ResultScenarioIdentity } from "./scenario-ownership";
+import { withAuthorizedComparisonWorkspace } from "./authorized-comparison-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
 const environment = assertE2eEnvironment(process.env), SPEC = "e2e/comparison.spec.ts";
 const { identity, seed } = comparisonFixture(SPEC), baseURL = scenarioBaseUrl(SPEC, environment);
-interface WorkspaceFixture { organization_id: string; user_id: string; distrito_code: string; seccion_code: string; extra_seccion_code?: string; }
-async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuthorization: () => Promise<void>) => Promise<T>, fixtureIdentity: ResultScenarioIdentity = identity): Promise<T> {
-  const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
-  const { data: users, error: userError } = await admin.auth.admin.listUsers();
-  const user = users?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
-  if (userError || !user) throw new Error("failed to resolve comparison fixture user");
-  const { data, error } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: fixtureIdentity.distritoCode, p_seccion_code: fixtureIdentity.seccionCode });
-  if (error || typeof data?.organization_id !== "string") throw new Error("failed to set up authorized comparison fixture");
-  let fixture = data as WorkspaceFixture;
-  const leftOnlySection = fixtureIdentity.comparisonLeftOnlySection;
-  if (!leftOnlySection) throw new Error("comparison fixture left-only section is missing");
-  const extension = await admin.rpc("e2e_extend_authorized_fiscal_fixture", { p_fixture: fixture, p_distrito_code: leftOnlySection.distritoCode, p_seccion_code: leftOnlySection.seccionCode });
-  if (extension.error || extension.data?.organization_id !== fixture.organization_id || extension.data?.extra_seccion_code !== leftOnlySection.seccionCode) {
-    const cause = new Error("failed to extend authorized comparison fixture");
-    const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture });
-    if (cleanup.error || cleanup.data?.cleaned !== true) throw new AggregateError([cause, new Error(cleanup.error?.message ?? "comparison fixture setup cleanup failed")], "comparison fixture setup and cleanup failed");
-    throw cause;
-  }
-  fixture = extension.data as WorkspaceFixture;
-  let outcome: { value: T } | { error: unknown }; let cleanupError: Error | null = null;
-  try {
-    await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByRole("combobox", { name: "Organización", exact: true }); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
-    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched;
-    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
-    const revokeAuthorization = async (): Promise<void> => { const revoked = await admin.rpc("e2e_revoke_authorized_fiscal_fixture", { p_fixture: fixture }); if (revoked.error || revoked.data?.revoked !== true || revoked.data?.revoked_scope_count !== 2) throw new Error("failed to revoke authorized comparison fixture"); };
-    outcome = { value: await run(revokeAuthorization) };
-  } catch (caught) { outcome = { error: caught }; }
-  finally {
-    try {
-      const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture });
-      if (cleanup.error || cleanup.data?.cleaned !== true) cleanupError = new Error(cleanup.error?.message ?? "comparison fixture cleanup failed");
-    } catch (caught) { cleanupError = caught instanceof Error ? caught : new Error("comparison fixture cleanup failed"); }
-  }
-  if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, cleanupError], "comparison assertions and cleanup failed"); throw outcome.error; }
-  if (cleanupError) throw cleanupError; return outcome.value;
-}
 async function writeSignInFailureFacts(page: Page): Promise<string> {
   const path = test.info().outputPath("e2e-facts-sign-in.json");
   const facts = await page.evaluate(() => ({
@@ -208,9 +172,10 @@ test.describe("authorized official comparison", () => {
       await expect(panel).toBeVisible();
       const first = panel.getByRole("article", { name: "Lado A — 2023 generales" });
       const second = panel.getByRole("article", { name: "Lado B — 2025 legislativas" });
-      await first.locator('[data-map-controls] > summary').click();
-      await first.getByRole("button", { name: "Activar mapa interactivo de Lado A — 2023 generales" }).click();
-      await expect(first.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+      await panel.locator('[data-map-controls] > summary').click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
+      await panel.getByRole("button", { name: "Mostrar mapa interactivo" }).click();
+      await expect(panel.getByRole("status").nth(0)).toContainText("Mapa de", { timeout: 15000 });
       const firstMap = first.locator(".maplibregl-map");
       const secondMap = second.locator(".maplibregl-map");
       await expect(firstMap.locator("canvas.maplibregl-canvas")).toBeVisible();
@@ -227,9 +192,7 @@ test.describe("authorized official comparison", () => {
       const panned = await settledMap(firstMap, "first map after user pan");
       expectSameViewport(original, panned, "first pan");
       expect(panned.image.equals(original.image), "user pan did not change the settled map view").toBe(false);
-      await second.locator('[data-map-controls] > summary').click();
-      await second.getByRole("button", { name: "Activar mapa interactivo de Lado B — 2025 legislativas" }).click();
-      await expect(second.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+      await expect(panel.getByRole("status").nth(1)).toContainText("Mapa de", { timeout: 15000 });
       await expect(secondMap.locator("canvas.maplibregl-canvas")).toBeVisible();
       const synchronized = await settledMap(secondMap, "second map after activation");
       const inheritedFill = await expectElectoralFill(page, secondMap, synchronized.image, rightFill, "second map after activation");
@@ -253,7 +216,7 @@ test.describe("authorized official comparison", () => {
       const reverseLeft = await expectElectoralFill(page, firstMap, firstSynchronized.image, leftFill, "first map after second pan");
       const reverseRight = await expectElectoralFill(page, secondMap, secondPanned.image, rightFill, "second map after user pan");
       expect(alignedOccupiedGeometry(reverseLeft.raster, reverseLeft.composited, reverseRight.raster, reverseRight.composited), "first map did not inherit the second polygon geometry within one pixel").toBe(true);
-      await second.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).click();
+      await panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).click();
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeFocused();
       await expect(main.locator('[data-results-for="compare-results-heading"]')).toHaveAttribute("open", "");
       await expect(main.getByRole("table")).toContainText(spatial.identity.comparisonParty!.displayName);
@@ -309,13 +272,14 @@ test.describe("authorized official comparison", () => {
         expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 2);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       }
-      for (const article of articles) {
-        await article.locator('[data-map-controls] > summary').click();
-        const activate = article.getByRole("button", { name: /Activar mapa interactivo de Lado/ });
-        await tabTo(activate, `map activation in ${await article.getAttribute("aria-label")}`);
-        await expect(activate).toBeFocused();
-        await page.keyboard.press("Enter");
-        await expect(article.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+      await panel.locator('[data-map-controls] > summary').click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
+      const activate = panel.getByRole("button", { name: "Mostrar mapa interactivo" });
+      await tabTo(activate, "shared map activation");
+      await expect(activate).toBeFocused();
+      await page.keyboard.press("Enter");
+      for (const [index, article] of articles.entries()) {
+        await expect(panel.getByRole("status").nth(index)).toContainText("Mapa de", { timeout: 15000 });
         const canvas = article.locator("canvas.maplibregl-canvas");
         await expect(canvas).toBeVisible();
         const box = await canvas.boundingBox();
@@ -324,7 +288,7 @@ test.describe("authorized official comparison", () => {
         expect(box.x).toBeGreaterThanOrEqual(0);
         expect(box.x + box.width).toBeLessThanOrEqual(321);
       }
-      const select = articles[1]!.getByRole("button", { name: "Seleccionar sección y consultar resultados" });
+      const select = panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" });
       await tabTo(select, "second map section selection");
       await expect(select).toBeFocused();
       await page.keyboard.press("Enter");
@@ -353,8 +317,9 @@ test.describe("authorized official comparison", () => {
       await expect(main).toContainText(spatial.identity.archiveEntryIds[0]!);
       await expect(main).toContainText(spatial.identity.archiveEntryIds[1]!);
       await expect(main).toContainText("SHA-256");
-      await panel.getByRole("article", { name: "Lado A — 2023 generales" }).locator('[data-map-controls] > summary').click();
-      const activate = panel.getByRole("article", { name: "Lado A — 2023 generales" }).getByRole("button", { name: "Activar mapa interactivo de Lado A — 2023 generales" });
+      await panel.locator('[data-map-controls] > summary').click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
+      const activate = panel.getByRole("button", { name: "Mostrar mapa interactivo" });
       await activate.focus();
       await page.keyboard.press("Enter");
       await expect(panel.getByRole("status").first()).toContainText("Mapa no disponible; los resultados exactos siguen disponibles.");
@@ -464,7 +429,7 @@ test.describe("authorized official comparison", () => {
       await expect(rails).toHaveCount(2);
       for (const side of ["A", "B"]) {
         const evidence = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true });
-        const provenance = evidence.locator("details");
+        const provenance = evidence.locator("details.official-compare__provenance");
         await expect(provenance).not.toHaveAttribute("open", "");
         await expect(provenance.getByText(/SHA-256/)).toBeHidden();
         await evidence.getByText(`Procedencia oficial — Lado ${side}`, { exact: true }).press("Enter");
@@ -486,7 +451,10 @@ test.describe("authorized official comparison", () => {
       const hashes = applied.rails.flatMap((rail) => [...rail.matchAll(/SHA-256 ([a-f0-9]{64})/g)].map((match) => match[1]));
       expect(hashes).toHaveLength(2);
       const chart = main.getByRole("region", { name: "Participación por partido", exact: true });
-      await expect(chart).toBeVisible();
+      // The chart is folded behind its own disclosure on the compact hierarchy (#499); open it before reading.
+      const chartDisclosure = main.locator("details[data-comparison-chart]");
+      const openChart = async (): Promise<void> => { if (await chartDisclosure.getAttribute("open") === null) await chartDisclosure.locator("summary").click(); };
+      await openChart(); await expect(chart).toBeVisible();
       await expect(chart).toContainText("100,00 %");
       await expect(chart).toContainText(/votos.*partidos/i);
       // While a new selection is being served, no old figures or evidence remain current.
@@ -517,9 +485,9 @@ test.describe("authorized official comparison", () => {
       await sharedSection.focus();
       await sharedSection.selectOption(identity.seccionCode);
       await expect(page).toHaveURL(servedUrl.toString());
-      await expect(chart).toBeVisible();
+      await openChart(); await expect(chart).toBeVisible();
       for (const side of ["A", "B"]) {
-        const details = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true }).locator("details");
+        const details = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true }).locator("details.official-compare__provenance");
         if (!await details.getAttribute("open").then((value) => value !== null)) await details.locator("summary").click();
       }
       await openExactTable();
@@ -577,7 +545,7 @@ test.describe("authorized official comparison", () => {
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
       });
       await test.step("390px preserves reading order from editors through both evidence rails", async () => {
-        await page.setViewportSize({ width: 390, height: 844 });
+        await page.setViewportSize({ width: 390, height: 844 }); await openChart();
         // Selection details now follow the workbench and its child comparison, rather than preceding maps.
         const ordered = [shared, editA, editB, workbench, main.getByRole("region", { name: "Cambio por territorio", exact: true }), contexts, chart, tableRegion, evidenceA, evidenceB];
         for (let index = 1; index < ordered.length; index++) {
@@ -621,7 +589,7 @@ test.describe("authorized official comparison", () => {
         await expectAppliedUnchanged();
       });
       await page.emulateMedia({ reducedMotion: "reduce" });
-      await expect(chart).toBeVisible();
+      await openChart(); await expect(chart).toBeVisible();
       await page.goto(new URL("/", baseURL).toString());
       await page.goto(servedUrl.toString());
       await page.goBack();
@@ -629,7 +597,7 @@ test.describe("authorized official comparison", () => {
       await page.goForward();
       await expect(page).toHaveURL(servedUrl.toString());
       await expect(sharedSection).toHaveValue(identity.seccionCode);
-      await expect(chart).toBeVisible();
+      await openChart(); await expect(chart).toBeVisible();
       await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
       await expect(chart).toHaveCount(0); await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");

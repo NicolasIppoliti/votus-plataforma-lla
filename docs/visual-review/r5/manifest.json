@@ -1,0 +1,10 @@
+{
+  "round": 5,
+  "status": "blocked",
+  "reason": "Authorized frozen-lockfile installation failed; browser dependencies unavailable.",
+  "captures": [],
+  "pairs": [],
+  "visualReviewPerformed": false,
+  "historicalBeforeAvailable": false,
+  "notes": "NOTES.md"
+}

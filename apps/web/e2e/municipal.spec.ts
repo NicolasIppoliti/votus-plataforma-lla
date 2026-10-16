@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -15,6 +15,7 @@ import {
   withResultFixture,
 } from "./result-fixture";
 import { resultScenarioIdentity, scenarioBaseUrl } from "./scenario-ownership";
+import { withAuthorizedMunicipalWorkspace } from "./authorized-municipal-fixture";
 
 const environment = assertE2eEnvironment(process.env);
 const SPEC = "e2e/municipal.spec.ts";
@@ -24,26 +25,6 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 const identity = resultScenarioIdentity(SPEC);
 
 interface WorkspaceFixture { organization_id: string; user_id: string; distrito_code: string; seccion_code: string; }
-async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promise<T>): Promise<T> {
-  const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
-  const { data: users, error: userError } = await admin.auth.admin.listUsers();
-  const user = users?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
-  if (userError || !user) throw new Error("failed to resolve municipal fixture user");
-  const { data, error } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: "02", p_seccion_code: "027" });
-  if (error || typeof data?.organization_id !== "string") throw new Error("failed to set up authorized municipal fixture");
-  const fixture = data as WorkspaceFixture;
-  try {
-    await page.goto(new URL("/dashboard", baseURL).toString());
-    await page.getByRole("combobox", { name: "Organización", exact: true }).selectOption(fixture.organization_id);
-    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await page.getByRole("button", { name: "Cambiar organización" }).click();
-    expect({ ok: (await switched).ok() }).toEqual({ ok: true });
-    return await run();
-  } finally {
-    const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture });
-    if (cleanup.error || cleanup.data?.cleaned !== true) throw new Error(cleanup.error?.message ?? "municipal fixture cleanup failed");
-  }
-}
 
 // #467 lives in the existing municipal scenario so the release gate uses its
 // isolated server configuration and owned result fixture. Requires #425 / #518.
@@ -597,6 +578,25 @@ test.describe("the municipal route requires workspace-authorized official result
         await expect(tableRegion).toBeFocused();
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       }
+
+      await page.setViewportSize({ width: 320, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+      expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+      await tableRegion.focus();
+      await expect(tableRegion).toBeFocused();
+      await tableRegion.evaluate((element) => { element.scrollLeft = 0; });
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => tableRegion.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+      await tableRegion.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+      const lastColumn = tableRegion.getByRole("columnheader").last();
+      await expect(lastColumn).toBeVisible();
+      await expect.poll(() => lastColumn.evaluate((element) => {
+        const owner = element.closest('[role="region"]');
+        if (!owner) return false;
+        const region = owner.getBoundingClientRect();
+        const header = element.getBoundingClientRect();
+        return header.left >= region.left && header.right <= region.right;
+      }), { message: "The last Municipal column fits inside its scroll region at the end" }).toBe(true);
 
       await page.setViewportSize({ width: 1440, height: 900 });
       await expect(distribution).toBeVisible();

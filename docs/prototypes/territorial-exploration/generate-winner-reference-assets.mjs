@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { geoMercator, geoPath } from '/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/apps/web/node_modules/d3-geo/src/index.js';
+import { fileURLToPath } from 'node:url';
+const { geoMercator, geoPath } = await import(new URL('../../../apps/web/node_modules/d3-geo/src/index.js', import.meta.url));
 
-const repository = '/Users/nicolasmateoippoliti/dev/votus-plataforma-lla';
+const repository = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 const sourceHash = '964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673';
 const sourcePath = `${repository}/archive/geography/cne-pba-sections.${sourceHash}.geojson`;
 const sourceBytes = await readFile(sourcePath);
@@ -30,7 +31,7 @@ const provinceLabels = new Map([
 
 // Simplify ONLY the 516 valid source geometries. Invalid inputs retain their
 // original coordinate arrays; no buffer(0), make_valid, union or repair occurs.
-const python = spawnSync(`${repository}/etl/.venv/bin/python`, ['-c', `
+const python = spawnSync(process.env.PYTHON ?? 'python3', ['-c', `
 import hashlib,json,math
 from shapely.geometry import shape,mapping,Polygon
 from shapely.validation import explain_validity

@@ -25,6 +25,44 @@ function side(year: 2023 | 2025, electionId: string, categoryId: string, votes: 
 function evidence() { return { status: "ok" as const, left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]), right: side(2025, IDS.rightElection, IDS.rightCategory, [55, 45]) }; }
 beforeEach(() => { mocks.completeness.mockReset().mockResolvedValue({ status: "unavailable" }); mocks.circuits.mockReset().mockResolvedValue({ status: "unavailable" }); leftDistricts = [district]; rightDistricts = [district]; leftSections = [section]; rightSections = [section]; mocks.facets.mockReset().mockImplementation(facets); mocks.evidence.mockReset().mockResolvedValue(evidence()); mocks.geometry.mockReset().mockResolvedValue({ status: "ok", name: "Cnel. de Marina L.Rosales", sha256: "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673", fetchedAt: "2026-09-24T03:29:24Z", geometry: { type: "MultiPolygon", coordinates: [[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]] } }); }); afterEach(() => vi.clearAllMocks());
 async function render(params: Record<string, string | string[] | undefined>): Promise<string> { return renderToStaticMarkup((await ComparePage({ searchParams: Promise.resolve(params) })) as ReactElement); }
+it("preserves the merged mobile region reading order through both evidence rails", async () => {
+  supportedSpatialEvidence();
+  const html = await render(PARAMS);
+  const markers = ['id="compare-shared-heading"', 'id="compare-edit-a-heading"', 'id="compare-edit-b-heading"', 'aria-label="Mesa de comparación territorial"', 'aria-labelledby="compare-child-heading"', 'aria-label="Contexto de comparación autorizada"', 'aria-labelledby="compare-chart-heading"', 'aria-label="Tabla exacta de participación', 'id="compare-evidence-a-heading"', 'id="compare-evidence-b-heading"'];
+  const positions = markers.map(marker => { const index = html.indexOf(marker); expect(index, marker).toBeGreaterThanOrEqual(0); return index; });
+  for (let i = 1; i < positions.length; i++) expect(positions[i], `${markers[i - 1]} before ${markers[i]}`).toBeGreaterThan(positions[i - 1]!);
+  expect(html.indexOf('id="compare-side-b-heading"')).toBeGreaterThan(html.indexOf('id="compare-side-a-heading"'));
+});
+
+it("folds the secondary chart by default without removing its data", async () => {
+  const html = await render(PARAMS);
+  expect(html).toMatch(/<details[^>]*data-comparison-chart=""[^>]*><summary>Gráfico de participación oficial por partido<\/summary>/);
+  expect(html.match(/<details[^>]*data-comparison-chart=""[^>]*>/)?.[0]).not.toMatch(/\bopen(?:\s|=|>)/);
+  expect(html).toContain('aria-labelledby="compare-chart-heading"');
+  expect(html).toContain("PARTIDO A 2023");
+});
+
+it("folds each official reference while retaining visible evidence and coverage rails", async () => {
+  const html = await render(PARAMS);
+  for (const side of ["A", "B"]) {
+    expect(html).toMatch(new RegExp(`<details[^>]*data-reference-side="${side}"[^>]*><summary>Referencia oficial — Lado ${side}</summary>`));
+    expect(html.match(new RegExp(`<details[^>]*data-reference-side="${side}"[^>]*>`))?.[0]).not.toMatch(/\bopen(?:\s|=|>)/);
+    expect(html).toContain(`Evidencia oficial — Lado ${side}`);
+    expect(html).toContain(`Cobertura y exclusiones — Lado ${side}`);
+  }
+  expect(html).toContain("referencia(s), elección");
+  expect(html).toContain("excluidas de todas las cifras");
+});
+
+it("renders one shared map action set for both official panels", async () => {
+  supportedSpatialEvidence();
+  const html = await render(PARAMS);
+  expect(html.match(/>Mostrar mapa interactivo</g)).toHaveLength(1);
+  expect(html.match(/>Seleccionar sección y consultar resultados</g)).toHaveLength(1);
+  expect(html.match(/>Ir a los resultados exactos de la sección</g)).toHaveLength(1);
+  expect(html).toContain('aria-label="Controles compartidos de los mapas"');
+});
+
 it("redirects old compare URLs through the real route before authorized reads", async () => {
   await expect(render({ leftElectionId: IDS.leftElection, rightElectionId: IDS.rightElection, leftCategoryId: IDS.leftCategory, rightCategoryId: IDS.rightCategory, distritoCode: "2", seccionCode: "27" })).rejects.toThrow(`REDIRECT:/compare?electionId=${IDS.leftElection}&categoryId=${IDS.leftCategory}&sourceKind=official&distritoCode=02&seccionCode=027&bElectionId=${IDS.rightElection}&bCategoryId=${IDS.rightCategory}`);
   expect(mocks.facets).not.toHaveBeenCalled();
@@ -94,17 +132,57 @@ it("puts the workbench before selection details and paints static maps on load",
   for (const text of ["La comparación se actualiza al cambiar la selección.", "Opciones no compartidas — Distrito", "Comparación aplicada", 'aria-label="Contexto de comparación autorizada"']) expect(workbench).toBeLessThan(markup.indexOf(text));
 });
 
-it("keeps optional map actions and repeated applied context folded on the rendered page", async () => {
+it("keeps optional map actions and consolidated applied context folded on the rendered page", async () => {
   supportedSpatialEvidence();
   const markup = await render(PARAMS);
-  expect(markup.match(/<details[^>]*data-map-controls=""/g)).toHaveLength(2);
+  expect(markup.match(/<details[^>]*data-map-controls=""/g)).toHaveLength(1);
   expect(markup).not.toMatch(/<details[^>]*data-map-controls=""[^>]*open/);
-  expect(markup).toMatch(/<details[^>]*data-applied-context=""[^>]*><summary>Contexto de comparación aplicada<\/summary>/);
+  expect(markup).toMatch(/<details[^>]*data-applied-context=""[^>]*><summary><span>Comparación aplicada<\/span><span> · Contexto y límites<\/span><\/summary>/);
   expect(markup).toContain("Mostrar mapa interactivo");
   expect(markup).toContain("Seleccionar sección y consultar resultados");
   expect(markup).toMatch(/<details[^>]*data-child-controls=""[^>]*><summary>Controles del siguiente nivel<\/summary>/);
   expect(markup).toContain("Completitud de la sección");
   expect(markup).toContain("Dos elecciones oficiales");
+});
+
+it("consolidates applied context and selection notes into one closed lower disclosure", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  const context = markup.match(/<details[^>]*data-applied-context=""[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
+  expect(context).toContain("Comparación aplicada");
+  expect(context).toContain("Contexto y límites");
+  expect(context).toContain("La comparación se actualiza al cambiar la selección.");
+  expect(context).toContain("Opciones no compartidas — Distrito");
+  expect(context).toContain("Opciones no compartidas — Sección");
+  expect(context).toContain('aria-label="Contexto de comparación autorizada"');
+  expect(context).not.toMatch(/<details[^>]*open/);
+  expect(markup).not.toContain("<summary>Notas de la selección</summary>");
+  expect(markup).not.toContain("<h2>Detalles de la selección</h2>");
+  expect(markup.match(/Comparación aplicada/g)).toHaveLength(1);
+  expect(markup.indexOf('id="compare-child-heading"')).toBeLessThan(markup.indexOf('data-applied-context=""'));
+});
+
+it.each([false, true])("orders inspector → child changes → context → exact table with child membership available=%s", async (available) => {
+  supportedSpatialEvidence();
+  if (available) mocks.circuits.mockResolvedValue({ status: "ok", circuit_membership: "known",
+    circuits: [{ circuito_code: "00248", positive_total: 100, status: "complete", parties: [
+      { identity_status: "canonical", canonical_party_id: "party-a", votes: 60 },
+      { identity_status: "canonical", canonical_party_id: "party-b", votes: 40 },
+    ] }], unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0,
+      membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 } });
+  const markup = await render(PARAMS);
+  const destinations = ['aria-label="Detalle de comparación"', 'id="compare-child-heading"', 'data-applied-context=""',
+    'id="compare-results-heading"', 'data-results-for="compare-results-heading"', 'id="compare-evidence-heading"'];
+  for (const [index, destination] of destinations.entries()) {
+    expect(markup).toContain(destination);
+    if (index > 0) expect(markup.indexOf(destinations[index - 1]!)).toBeLessThan(markup.indexOf(destination));
+  }
+  expect(markup.match(/data-results-for="compare-results-heading"/g)).toHaveLength(1);
+  expect(markup.match(/id="compare-child-heading"/g)).toHaveLength(1);
+  if (available) {
+    expect(markup).toContain("1 de 1 pares comparables");
+    expect(markup.indexOf("Cambio por circuito sobre votos positivos incluidos</caption>")).toBeLessThan(markup.indexOf("Participación oficial y variación en puntos porcentuales</caption>"));
+  } else expect(markup).toContain("Comparabilidad del siguiente nivel no disponible");
 });
 
 it("paints two static maps on load", async () => {
@@ -195,8 +273,10 @@ it("pins the spatial fixture side-B selected-party fill to the interactive raste
 it("keeps all six selected native values readable outside the single-line controls on phones", async () => {
   const markup = await render(PARAMS);
   const editor = markup.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
-  expect(editor.match(/class="responsive-select__value"/g)).toHaveLength(6);
-  expect(editor.match(/data-mobile-select-value=""/g)).toHaveLength(6);
+  const fullValues = [...editor.matchAll(/<span class="responsive-select__value" data-mobile-select-value="" aria-hidden="true">([^<]*)<\/span>/g)].map(match => match[1]);
+  expect(fullValues).toHaveLength(6);
+  expect(fullValues).toEqual(expect.arrayContaining(["02 — Buenos Aires", "027 — Coronel Rosales", "2023 generales", "2025 generales", "DIPUTADOS 2023", "DIPUTADOS 2025"]));
+  expect(editor).not.toContain("compare-full-values");
 });
 
 it("renders the approved header and paired selection without changing authorized query keys", async () => {
@@ -284,7 +364,7 @@ it("shows paired current-reference geography for the exact authorized national d
   expect(markup).toContain("Lado B — 2025 legislativas");
   expect(markup).toContain("Mayor participación en la sección: PARTIDO A 2023 — 60,00 % (60 votos de 100 votos partidarios incluidos)");
   expect(markup).toContain("Mayor participación en la sección: PARTIDO A 2025 — 55,00 % (55 votos de 100 votos partidarios incluidos)");
-  expect(markup.match(/Mostrar mapa interactivo/g)).toHaveLength(2);
+  expect(markup.match(/Mostrar mapa interactivo/g)).toHaveLength(1);
   expect(markup).toContain("no certifica límites históricos");
   for (const side of ["A", "B"]) {
     expect(markup).toMatch(new RegExp(`<details class="[^"]*sideFigures[^"]*"><summary>Cifras — Lado ${side}</summary><p>Denominador: `));
@@ -385,7 +465,7 @@ describe("authorized comparison page", () => {
   it("folds the exact party table and selection notes into closed disclosures that name what they hold", async () => {
     const markup = await render(PARAMS);
     expect(markup).toMatch(/<details class="[^"]*exactTable[^"]*" data-results-for="compare-results-heading"><summary>Tabla exacta — \d+ agrupaciones, votos y variación por lado<\/summary><div[^>]*aria-label="Tabla exacta de participación/);
-    expect(markup).toMatch(/<details class="[^"]*selectionNotes[^"]*"><summary>Notas de la selección<\/summary><p[^>]*>La comparación se actualiza al cambiar la selección\.<\/p>/);
+    expect(markup).toMatch(/<details class="[^"]*selectionNotes[^"]*" data-applied-context=""><summary>[\s\S]*?<\/summary><p[^>]*>La comparación se actualiza al cambiar la selección\.<\/p>/);
     expect(markup).toContain("Comparación aplicada");
     expect(markup).not.toMatch(/<details[^>]*open/);
   });

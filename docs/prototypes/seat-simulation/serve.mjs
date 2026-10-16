@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('.', import.meta.url));
-const assets = fileURLToPath(new URL('../territorial-exploration-prototype/assets/', import.meta.url));
+const assets = fileURLToPath(new URL('../territorial-exploration/assets/', import.meta.url));
 const frozen = new Set(['demo-results.json','reference-paths.json','winner-reference-paths.json','plex-sans.woff2','plex-mono.woff2','plex-mono-semibold.woff2']);
 const types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json','.woff2':'font/woff2'};
 export function createPreviewServer() {

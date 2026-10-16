@@ -1,0 +1,44 @@
+{
+  "python": "3.13.12",
+  "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+  "archive_sha256": "5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b",
+  "source": "national/2025-legislativas",
+  "conditions": "fresh subprocesses; warm/uncontrolled OS cache; no metrics in timed runs; companion when present; extraction/imports excluded; no DB",
+  "runs": [
+    {
+      "wall_seconds": 45.210460959002376,
+      "cpu_seconds": 45.054432000000006,
+      "peak_rss_bytes": 1314881536,
+      "rows": 2276730,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 47.64032637490891,
+      "cpu_seconds": 47.533772000000006,
+      "peak_rss_bytes": 1315160064,
+      "rows": 2276730,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 46.57641450013034,
+      "cpu_seconds": 46.456483999999996,
+      "peak_rss_bytes": 1314766848,
+      "rows": 2276730,
+      "parser_scans": 2
+    }
+  ],
+  "medians": {
+    "wall_seconds": 46.57641450013034,
+    "cpu_seconds": 46.456483999999996,
+    "peak_rss_bytes": 1314881536
+  },
+  "parity": {
+    "rows": 2276730,
+    "ordered_rows_sha256": "e2d6d951b210ec845d798261214cf9a9ff91f9029d08bd39deb1e795653298d9",
+    "completeness_sha256": "dc05bc36844a04f3edd304268e8f90b193be62c4bbe206e56bcf610389fb9ebe",
+    "metrics_sha256": "b0f3452208501ceb253c40c9472c25bba5a07ff701d2f537f5808dba0b556079",
+    "stderr_sha256": "3418c14c3fa498dd96e78c2159228c52f4078df603866d8620cd7dd1a4e41d05",
+    "parser_scans": 2,
+    "total_scans_with_completeness": 3
+  }
+}

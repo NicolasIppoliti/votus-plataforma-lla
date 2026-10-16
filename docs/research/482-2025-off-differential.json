@@ -1,0 +1,113 @@
+{
+  "python": "3.13.12",
+  "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+  "archive_sha256": "5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b",
+  "source": "national/2025-legislativas",
+  "fast_path": "off",
+  "extraction_directory": "/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-worktrees/m482/docs/research/482-extracted-2025",
+  "conditions": "fresh subprocesses; warm/uncontrolled OS cache; no metrics in timed runs; companion when present; extraction/imports excluded; no DB",
+  "runs": [
+    {
+      "wall_seconds": 59.579870000015944,
+      "cpu_seconds": 52.94437,
+      "peak_rss_bytes": 1208647680,
+      "rows": 2276730,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 49.157958708005026,
+      "cpu_seconds": 48.765355,
+      "peak_rss_bytes": 1315864576,
+      "rows": 2276730,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 73.07812679186463,
+      "cpu_seconds": 60.629329000000006,
+      "peak_rss_bytes": 1082130432,
+      "rows": 2276730,
+      "parser_scans": 2
+    }
+  ],
+  "medians": {
+    "wall_seconds": 59.579870000015944,
+    "cpu_seconds": 52.94437,
+    "peak_rss_bytes": 1208647680
+  },
+  "ranges": {
+    "wall_seconds": [
+      49.157958708005026,
+      73.07812679186463
+    ],
+    "cpu_seconds": [
+      48.765355,
+      60.629329000000006
+    ],
+    "peak_rss_bytes": [
+      1082130432,
+      1315864576
+    ]
+  },
+  "parity": {
+    "rows": 2276730,
+    "ordered_rows_sha256": "e2d6d951b210ec845d798261214cf9a9ff91f9029d08bd39deb1e795653298d9",
+    "completeness_sha256": "dc05bc36844a04f3edd304268e8f90b193be62c4bbe206e56bcf610389fb9ebe",
+    "metrics_sha256": "b0f3452208501ceb253c40c9472c25bba5a07ff701d2f537f5808dba0b556079",
+    "status": {
+      "status": "failed",
+      "first_pass": "complete",
+      "iteration": "complete",
+      "commit_returned": false
+    },
+    "status_sha256": "928812613379820f49133f87139cf48a3ceac937fa57f4fabceb7899cbcd462d",
+    "exclusion_breakdown": {
+      "exclusions": {
+        "estado_final='NO ESCRUTADO'": {
+          "rows": 18646,
+          "parseable_votes": 0,
+          "unreadable_vote_rows": 0
+        }
+      },
+      "categories": {
+        "SENADOR NACIONAL": {
+          "records_seen": 386004,
+          "rows_emitted": 382029,
+          "exclusions": {
+            "estado_final='NO ESCRUTADO'": {
+              "rows": 3975,
+              "parseable_votes": 0,
+              "unreadable_vote_rows": 0
+            }
+          }
+        },
+        "DIPUTADO NACIONAL": {
+          "records_seen": 1909372,
+          "rows_emitted": 1894701,
+          "exclusions": {
+            "estado_final='NO ESCRUTADO'": {
+              "rows": 14671,
+              "parseable_votes": 0,
+              "unreadable_vote_rows": 0
+            }
+          }
+        }
+      },
+      "ambiguous_categories": {},
+      "companion_conflicts": {
+        "input_exclusions": {},
+        "input_unique_conflict_keys": 0,
+        "input_conflict_keys": {},
+        "result_rows": 0,
+        "result_votes": 0,
+        "result_keys": 0,
+        "result_reasons": {}
+      }
+    },
+    "exclusions_sha256": "c6b130a4ae38e170c71818ed3bbe9edade554158b719c87f71790d3cd077e614",
+    "quarantine_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "completeness_status_sha256": "fa7fa1a3e327fa5087d714ba81661533977a4a1d3af21b13163b6a1e84a32abc",
+    "stderr_sha256": "3418c14c3fa498dd96e78c2159228c52f4078df603866d8620cd7dd1a4e41d05",
+    "parser_scans": 2,
+    "total_scans_with_completeness": 3
+  }
+}

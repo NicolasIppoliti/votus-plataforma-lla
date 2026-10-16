@@ -1,4 +1,5 @@
 "use client";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useState } from "react";
@@ -16,8 +17,8 @@ export function EvidenceUnits({ membership, rosales }: { membership: OfficialSec
     {membership.status === "ok" && <section aria-label="Mesas y conflictos sin circuito asignado" className={styles.unassigned}>
       <h3>Sin circuito asignado</h3>
       <p>Mesas del catálogo sin pertenencia: {membership.unassigned.catalogue_mesas_without_membership}; mesas en cuarentena de pertenencia: {membership.unassigned.membership_quarantined_mesas}; cuarentenas de completitud: {membership.unassigned.completeness_quarantines}; estados fuera del catálogo: {membership.unassigned.unexpected_status_mesas}.</p>
-      {Object.entries(membership.unassigned.membership_quarantine_reasons).map(([reason, count]) => <p role="note" key={`membership-${reason}`}>Pertenencia: {reason}: {count}.</p>)}
-      {Object.entries(membership.unassigned.completeness_quarantine_reasons).map(([reason, count]) => <p role="note" key={`completeness-${reason}`}>Completitud: {reason}: {count}.</p>)}
+      {Object.entries(membership.unassigned.membership_quarantine_reasons).map(([reason, count]) => <p role="note" key={`membership-${reason}`}>Pertenencia: {facetExclusionLabel(reason)}: {count}.</p>)}
+      {Object.entries(membership.unassigned.completeness_quarantine_reasons).map(([reason, count]) => <p role="note" key={`completeness-${reason}`}>Completitud: {facetExclusionLabel(reason)}: {count}.</p>)}
       <p>Los conflictos no atribuibles limitan todos los circuitos; no se descartan para declarar completitud.</p>
     </section>}
     {membership.status !== "ok" ? <Alert variant="unavailable">Pertenencia a circuitos no disponible. No se muestran unidades ni denominadores inventados.</Alert> : membership.circuit_membership === "unknown" ? <Alert variant="caveat">Pertenencia a circuitos desconocida. La fuente no aporta un desglose independiente de mesas esperadas por circuito.</Alert> : <>

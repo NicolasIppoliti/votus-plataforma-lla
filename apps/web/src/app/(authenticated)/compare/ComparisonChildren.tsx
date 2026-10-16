@@ -7,6 +7,7 @@ import { TableRegion } from "@/components/TableRegion";
 import { Alert } from "@/components/ui/alert";
 import styles from "./comparison.module.css";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 
 interface Row { code: string; reason: string | null; a: number | null; b: number | null; change: number | null; voteChange: number | null }
 function reason(a: CircuitOutcome | undefined, b: CircuitOutcome | undefined): string | null {
@@ -48,7 +49,7 @@ export function ComparisonChildren({ outcomes, party }: { outcomes: [OfficialSec
         <ul aria-label="Motivos de exclusión del siguiente nivel">{[...excluded].map(([label, count]) => <li key={label}>{label}: {count}</li>)}</ul>
         <p>Todos los circuitos informados en cualquiera de los lados; la búsqueda no cambia la cobertura. Los códigos no certifican equivalencia de límites históricos.</p>
         {[left, right].map((side, index) => side.status === "ok" && <div key={index}><p>Lado {index === 0 ? "A" : "B"}: mesas sin pertenencia {side.unassigned.catalogue_mesas_without_membership}; pertenencias en cuarentena {side.unassigned.membership_quarantined_mesas}; cuarentenas de completitud {side.unassigned.completeness_quarantines}; estados inesperados {side.unassigned.unexpected_status_mesas}.</p>
-          <ul>{Object.entries(side.unassigned.membership_quarantine_reasons).map(([label, count]) => <li key={`membership-${label}`}>{label}: {count}</li>)}{Object.entries(side.unassigned.completeness_quarantine_reasons).map(([label, count]) => <li key={`completeness-${label}`}>{label}: {count}</li>)}</ul></div>)}
+          <ul>{Object.entries(side.unassigned.membership_quarantine_reasons).map(([label, count]) => <li key={`membership-${label}`}>{facetExclusionLabel(label)}: {count}</li>)}{Object.entries(side.unassigned.completeness_quarantine_reasons).map(([label, count]) => <li key={`completeness-${label}`}>{facetExclusionLabel(label)}: {count}</li>)}</ul></div>)}
       </div>
       <TableRegion label="Tabla de cambio por circuito"><table className="data-table"><caption>Cambio por circuito sobre votos positivos incluidos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Estado del par</th><th scope="col">Participación A</th><th scope="col">Participación B</th><th scope="col">Cambio B − A</th><th scope="col">Votos B − A</th></tr></thead><tbody>{visible.map(row => <tr key={row.code}><th scope="row">Circuito {row.code}</th><td>{row.reason ?? "Observaciones completas; límites históricos sin verificar"}</td><td>{format(row.a, "%")}</td><td>{format(row.b, "%")}</td><td>{format(row.change, "pp", true)}</td><td>{row.voteChange === null ? "No disponible" : `${row.voteChange > 0 ? "+" : ""}${formatCount(row.voteChange)} votos`}</td></tr>)}</tbody></table></TableRegion>
       {!visible.length && <p>No hay coincidencias.</p>}

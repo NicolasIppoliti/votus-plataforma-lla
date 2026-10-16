@@ -5,10 +5,10 @@ import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('.',import.meta.url));
 const shared=new Map();
 for(const name of ['demo-results.json','reference-paths.json','winner-reference-paths.json','plex-sans.woff2','plex-mono.woff2','plex-mono-semibold.woff2'])
-  shared.set(name,fileURLToPath(new URL('../territorial-exploration-prototype/assets/'+name,import.meta.url)));
-shared.set('evidence-model.js',fileURLToPath(new URL('../evidence-quality-prototype/evidence-model.js',import.meta.url)));
-shared.set('evidence-policy.json',fileURLToPath(new URL('../evidence-quality-prototype/assets/evidence-policy.json',import.meta.url)));
-for(const name of ['simulation-model.js','kernel.js'])shared.set(name,fileURLToPath(new URL('../seat-simulation-prototype/'+name,import.meta.url)));
+  shared.set(name,fileURLToPath(new URL('../territorial-exploration/assets/'+name,import.meta.url)));
+shared.set('evidence-model.js',fileURLToPath(new URL('../evidence-quality/evidence-model.js',import.meta.url)));
+shared.set('evidence-policy.json',fileURLToPath(new URL('../evidence-quality/assets/evidence-policy.json',import.meta.url)));
+for(const name of ['simulation-model.js','kernel.js'])shared.set(name,fileURLToPath(new URL('../seat-simulation/'+name,import.meta.url)));
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json','.woff2':'font/woff2'};
 export function createPreviewServer(){
   return createServer(async(req,res)=>{

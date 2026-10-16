@@ -2,7 +2,8 @@ import { chromium } from "@playwright/test";
 
 it("includes mobile screenshot evidence in the mandatory gate inventory", () => {
   expect(EXPECTED_E2E_SPECS).toContain("e2e/mobile-evidence.spec.ts");
-  expect(EXPECTED_E2E_SPECS).toHaveLength(9);
+  expect(EXPECTED_E2E_SPECS).toContain("e2e/visual-evidence-r5.spec.ts");
+  expect(EXPECTED_E2E_SPECS).toHaveLength(10);
 });
 
 it("sole-organization login seeds PASO through its matching ownership variant", () => {
@@ -3209,7 +3210,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(18);
+		expect(actionReferences).toHaveLength(19);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});
@@ -3313,14 +3314,14 @@ describe("base contracts", () => {
 			["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_"),
 		);
 	});
-	it("accepts only the exact nine-pass inventory", () => {
+	it("accepts only the exact ten-pass inventory", () => {
 		expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
 		expect(() => assertGateReport([], "passed")).toThrow("discovered 0 tests");
 		expect(() =>
 			assertGateReport([{ ...PASSED[0]!, spec: "e2e/other.spec.ts" }], "passed"),
 		).toThrow("spec inventory mismatch");
 		expect(() => assertGateReport(PASSED.slice(0, 4), "passed")).toThrow(
-			"discovered 4 tests; expected 9",
+			"discovered 4 tests; expected 10",
 		);
 	});
 	it.each(["skipped", "interrupted", "failed", "timedOut"] as const)(
@@ -4590,7 +4591,7 @@ describe("ReleaseGateReporter", () => {
 					mode: "focused",
 					selectedCount: 1,
 					selected: [selected],
-					excludedCount: 8,
+					excludedCount: 9,
 					excluded: EXPECTED_E2E_SPECS.filter((spec) => spec !== selected),
 				},
 			});
