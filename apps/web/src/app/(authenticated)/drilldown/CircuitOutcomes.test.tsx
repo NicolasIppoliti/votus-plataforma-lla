@@ -22,3 +22,14 @@ it("labels circuit status in Spanish and keeps the per-reason counters in a disc
   expect(html).not.toContain("<td>complete");
   expect(html).toContain("<td>Completo<details><summary>Detalle de mesas</summary>no escrutadas: 0; sin estado: 0; inesperadas: 0; cuarentena: 0</details></td>");
 });
+
+it("draws Exploración's single circuit legend below the map, with the winner key visible (#610)", async () => {
+  const html = renderToStaticMarkup(<CircuitOutcomes outcomes={outcomes} rosales view="legend" />);
+  const visible = html.replace(/<details\b[\s\S]*?<\/details>/g, "");
+  expect(visible).toContain("Ganador: Grupo 6");
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./CircuitOutcomes.tsx", import.meta.url), "utf8");
+  expect(source).toMatch(/<Map geometry=\{geometry\}[^>]*legend=\{false\}/);
+  const css = readFileSync(new URL("./drilldown.module.css", import.meta.url), "utf8");
+  expect(css).toMatch(/\.mapPanel\[data-map-kind="data"\] \.territoryLabel \{[^}]*transform: none/);
+});

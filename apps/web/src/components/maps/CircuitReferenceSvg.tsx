@@ -11,9 +11,11 @@ export interface CircuitMapProps {
   selected: string | null;
   highlighted?: string | null;
   onSelect?: (code: string) => void;
+  /** Hosts with a fixed-height map frame draw the legend themselves, below it (#610). */
+  legend?: boolean;
 }
 /** SVG clipping draws the exact B∩C shared area without changing either source polygon. */
-export function CircuitReferenceSvg({ geometry, circuits, selected, highlighted = null, onSelect }: CircuitMapProps) {
+export function CircuitReferenceSvg({ geometry, circuits, selected, highlighted = null, onSelect, legend = true }: CircuitMapProps) {
   const id = useId().replaceAll(":", ""), hatch = `${id}-hatch`, overlap = `${id}-overlap`;
   const points = geometry.flatMap(c => c.coordinates.flat(2));
   const west = Math.min(...points.map(p => p[0])), east = Math.max(...points.map(p => p[0]));
@@ -45,11 +47,11 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, highlighted 
       <path d={path(c)} fill={NEUTRAL_COLOR} fillRule="evenodd" />
       <path d={path(c)} fill={`url(#${hatch})`} fillRule="evenodd" data-hatched="true" />
     </g>}
-  </svg><Legend label="Codificación de circuitos" entries={[
+  </svg>{legend && <Legend label="Codificación de circuitos" entries={[
     ...circuitWinnerKey(circuits).map(({ name, color }) => ({ label: `Ganador: ${name}`, encoding: "fill" as const, color })),
     { label: "Neutro: empate, sin votos positivos o lista sin mapear", encoding: "fill", color: NEUTRAL_COLOR },
     { label: `Margen sobre votos positivos: claro < ${MARGIN_BANDS.light.below} pp; medio ${MARGIN_BANDS.light.below}–${MARGIN_BANDS.medium.through} pp; intenso > ${MARGIN_BANDS.medium.through} pp`, encoding: "fill", color: REFERENCE_COLOR },
     { label: "Rayado: escrutinio provisorio o superposición en la fuente", encoding: "hatch" },
     { label: "Contorno de referencia CNE", encoding: "outline" },
-  ]} /></>;
+  ]} />}</>;
 }

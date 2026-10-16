@@ -59,3 +59,12 @@ describe("legend party key (#614)", () => {
     expect(legend).toContain("Neutro: empate, sin votos positivos o lista sin mapear");
   });
 });
+
+describe("legend placement (#610)", () => {
+  it("omits its own legend when the host draws one outside a fixed-height map frame", async () => {
+    const geometry = await loadCircuitGeometry();
+    const html = renderToStaticMarkup(<CircuitReferenceSvg geometry={geometry!} circuits={[outcome()]} selected={null} legend={false} />);
+    expect(html).not.toContain("Codificación de circuitos");
+    expect(renderToStaticMarkup(<CircuitReferenceSvg geometry={geometry!} circuits={[outcome()]} selected={null} />)).toContain("Codificación de circuitos");
+  });
+});
