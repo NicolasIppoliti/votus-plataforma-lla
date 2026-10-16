@@ -19,7 +19,7 @@ import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
-import type { ExplorationFacets, FacetOption } from "@/lib/results/exploration";
+import { formatTerritoryHeading, type ExplorationFacets, type FacetOption } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
 import {
@@ -226,7 +226,7 @@ function CompareSelector({
         <header className="page-header official-compare__header">
           <nav className={styles.trail} aria-label="Recorrido territorial">
             <span>Argentina</span>
-            {[distritos.find((option) => option.code === selected.distritoCode), secciones.find((option) => option.code === selected.seccionCode)].filter((option) => option !== undefined).map((option) => <span key={option.code}>/ {optionLabel(option)}</span>)}
+            {([[distritos.find((option) => option.code === selected.distritoCode), "Distrito"], [secciones.find((option) => option.code === selected.seccionCode), "Sección"]] as const).flatMap(([option, level]) => option ? [<span key={level}>/ {formatTerritoryHeading(option, level)}</span>] : [])}
           </nav>
           <h1>Comparación electoral</h1>
           <p className="official-compare__context">Dos muestras. El mismo territorio. Una lectura compartida.</p>
@@ -605,7 +605,7 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
       unique={unique}
       message="Comparación aplicada"
       context={comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
-      workbench={<ComparisonWorkbench territory={optionLabel(selectedSeccion)} swing={swing}
+      workbench={<ComparisonWorkbench territory={formatTerritoryHeading(selectedSeccion, "Sección")} swing={swing}
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}

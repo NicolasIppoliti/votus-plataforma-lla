@@ -35,8 +35,7 @@ import {
   type ExplorationFacets,
   type ExplorationLevel,
   type ExplorationSourceAudit,
-  type SchoolBreakdownExclusion,
-} from "@/lib/results/exploration";
+  type SchoolBreakdownExclusion, formatTerritoryHeading } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
   AuthorizedOfficialFacetsError,
@@ -389,7 +388,7 @@ function territorialItems(facets: ExplorationFacets, selected: ExplorerFormProps
     if (!option) break;
     values[key] = option.code;
     if (key !== "distritoCode") values.level = key === "seccionCode" ? "seccion" : key === "circuitoCode" ? "circuito" : "establecimiento";
-    items.push({ name: option.nameStatus === "present" && option.name ? option.name : formatFacetOptionLabel(option), values: { ...values } });
+    items.push({ name: key === "distritoCode" || key === "seccionCode" ? formatTerritoryHeading(option, key === "distritoCode" ? "Distrito" : "Sección") : option.nameStatus === "present" && option.name ? option.name : formatFacetOptionLabel(option), values: { ...values } });
   }
   if (selected.mesaCode !== undefined && facets.mesas.some(option => option.code === selected.mesaCode)) {
     items.push({ name: `Mesa ${selected.mesaCode}`, values: { ...values, mesaCode: selected.mesaCode, level: "mesa" } });

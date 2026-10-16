@@ -122,6 +122,11 @@ export function formatFacetOptionLabel(option: FacetOption, includeCode = true):
   if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — nombre no disponible`;
   return `${option.code} — nombres contradictorios (${option.nameVariantCount} variantes)`;
 }
+/** Headings and breadcrumbs name a territory; a missing or conflicting name reads
+ * as its level and code. The conflict stays visible in the selector (rule 4) (#611). */
+export function formatTerritoryHeading(option: FacetOption, level: "Distrito" | "Sección"): string {
+  return option.nameStatus === FACET_NAME_STATUS.PRESENT && option.name?.trim() && option.name !== option.code ? option.name : `${level} ${option.code}`;
+}
 /** A circuit row label: its name when known, otherwise its code exactly once (#452). */
 export function formatCircuitLabel(code: string, option: FacetOption | undefined): string {
   return option && option.nameStatus !== FACET_NAME_STATUS.MISSING ? formatFacetOptionLabel(option) : code;
