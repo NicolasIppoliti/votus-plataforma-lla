@@ -1,4 +1,9 @@
-# R5 final visual review — main `7ceb0b0`
+# R5 historical visual review — main `7ceb0b0`
+
+> Historical audit, retained for comparison. Current-state inventory and spec
+> disposition: [develop 2196d8f2, run 38928330948](current-2196d8f2.md).
+> The warnings and NOT SATISFIED verdicts below describe the old evidence, not
+> an independent disposition of the fresh captures.
 
 **Do not close #499, #500 or #501 on this evidence alone.** The full-page evidence is now available for all five pages, including Evidencia. Comparación's repeated per-map actions have been consolidated and Simulación's compact distribution is visibly improved. Nevertheless, mobile density, obstructed desktop captures, and a raw Evidencia exclusion code remain. Static images do not establish interaction assertions, strict TDD, or the required gate result.
 

@@ -1,4 +1,8 @@
-# Round 5 — capture blocked before browser setup
+# Round 5 — historical capture blocked before browser setup
+
+> This is the initial local attempt only. Fresh CI captures from run 38928330948
+> (develop 2196d8f2) have since been viewed; see [current inventory](current-2196d8f2.md).
+> The unavailable-capture verdicts below are historical, not current.
 
 These are investigation notes, not visual acceptance evidence. No PNGs or pairs were produced or reviewed. No historical before images were available; current prototype HTML recaptures would not establish historical before/after evidence.
 

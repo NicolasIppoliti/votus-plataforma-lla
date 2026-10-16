@@ -20,8 +20,10 @@ Each approved pair has `prototype-<name>-<width>.png` and
 | Simulación | seat-simulation | seeded scenario editor reached through `/scenarios` |
 
 `/municipal` and `/fiscalizacion` have **no approved prototype**. They receive
-production-only captures at 390 and 320 px. Both remain in official/default mode;
-this spec does not activate non-official fiscalización. All production captures
+production-only captures at 390 and 320 px. In run 38928330948 Municipal is
+in official mode; Fiscalización explicitly shows non-official opt-in coverage,
+with its denominator and not-random warning. Do not combine those source kinds.
+All production captures
 use the release gate's disposable synthetic fixture database, not live data.
 Screenshots are explicitly scoped to this spec, not enabled globally.
 
@@ -42,8 +44,14 @@ to commit. Approved prototype HTML/CSS remain unchanged.
 
 ## Evidence status
 
-The existing `manifest.json` and `NOTES.md` describe the earlier blocked local
-attempt and are preserved as historical evidence. This implementation has not
-run Playwright or performed visual review. CI captures must still be inspected
-side by side; automated availability/overflow checks do not establish visual
-parity. No historical before screenshots are asserted to exist.
+Current inventory: [develop 2196d8f2](current-2196d8f2.md), from green develop
+push run **38928330948** after #589/#590. All 15 same-scale pairs (1440/390/320)
+and four production-only mobile images were viewed for that inventory. It records
+S1/S4/S5/S6a–f/S7, owner decisions, lower-section matches/deviations and limitations.
+Independent no-blocking disposition and issue closure remain pending parent review.
+
+`findings.md` preserves the prior main `7ceb0b0` audit; `NOTES.md` preserves the
+initial blocked local attempt. Neither is the current visual verdict. The manifest
+locates external evidence; PNGs are not copied into the repository. No controlled
+historical production-before set is newly asserted. Automated checks alone do not
+establish visual parity.

@@ -33,19 +33,26 @@ new work, then use the numbered rules as repository-specific rejection criteria.
 `develop` is the integration branch; `main` only receives releases from it. The full
 flow and gate table live in README.md, "Integration branch".
 
-- Branch every change from `origin/develop` and open its pull request **into `develop`**,
-  never into `main`. Squash-merge it once its CI is green.
+- Work in **batches**: one branch per theme, cut from `origin/develop`, holding
+  **one commit per issue** with `(#<n>)` in its message. Run the local checks before
+  each commit (typecheck, lint, Vitest, and the focused E2E gate when browser
+  behaviour changes); CI confirms, it is not the first check. Keep a batch to one
+  theme and about 400 authored changed lines; past that, start the next batch.
+- Open one pull request per batch **into `develop`**, never into `main`, and merge it
+  with a **merge commit** (`gh pr merge --merge`) once its CI is green. Squashing would
+  fold the batch into one commit and lose the issue-to-commit mapping.
+- A red batch blocks the whole batch: fix it on the same branch, never by silently
+  dropping the failing issue's commit.
 - GitHub auto-closes issues only on the default branch, so `Closes #<n>` does not fire
-  for pull requests into `develop`. Right after the squash-merge, close each resolved
-  issue yourself with a comment naming the `develop` commit:
+  for pull requests into `develop`. Right after the merge, close each resolved issue
+  yourself with a comment naming that issue's own commit:
   `gh issue close <n> --comment "Resolved in develop by <sha> (#<pr>)."`
 - Pull requests into `develop` run only `web-static` and/or `etl-release`; the browser
   and SQL E2E lanes run on pushes to `develop` and on the `develop` → `main` pull
   request. Before asking for that release PR, the latest `develop` push must be green.
 - Merge the `develop` → `main` release PR (and any `main` → `develop` sync PR) with a
   **merge commit** (`gh pr merge --merge`), never squash: squashing gives `main` a commit
-  `develop` never has, and every later release diverges. Feature PRs into `develop`
-  stay squash-merged.
+  `develop` never has, and every later release diverges.
 - When `develop` turns red, fixing it comes before merging anything else into it.
   Diagnose from the run's E2E diagnostics and `review-focus-geometry` artifacts; CI
   redacts values, so add failure-only `e2e-facts-*.json` facts instead of guessing.
