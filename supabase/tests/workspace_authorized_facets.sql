@@ -10,6 +10,9 @@ insert into public.result_row(election_id,jurisdiction_id,category_id,granularit
  ('50000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000002','51000000-0000-0000-0000-000000000001','distrito','C',1,'official','unauthorized-coarse',3),
  ('50000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000002','distrito','D',1,'official','authorized-pba-distrito',4),
  ('50000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000002','distrito','E',2,'official','authorized-pba-dedup',5);
+-- Non-positive coarse evidence must not inflate the incomplete-lineage audit.
+insert into public.result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index,vote_kind)
+ values('50000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000002','51000000-0000-0000-0000-000000000001','distrito',null,4,'official','authorized-coarse-nulo',6,'NULO');
 set local role workspace_admin_owner;
 insert into workspace_private.organization(id,slug,display_name,entitlement_revision) values
  ('40000000-0000-0000-0000-000000000001','facets-one','Facets One',1),('40000000-0000-0000-0000-000000000002','facets-two','Facets Two',1);
@@ -30,7 +33,29 @@ insert into workspace_private.workspace_context(session_id,user_id,organization_
  ('42000000-0000-0000-0000-000000000006','41000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000001',2,1,1,statement_timestamp()+interval '1 hour',null),
  ('42000000-0000-0000-0000-000000000007','41000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',1,1,1,statement_timestamp()+interval '1 hour',null);
 reset role;
-select plan(25);
+-- Test-only pre-592 oracle: keep the full current envelope and restore the
+-- original audit statement. Compare entire JSON, not just aggregate totals.
+grant workspace_query_owner to current_user;
+grant create on schema workspace_api to workspace_query_owner;
+do $oracle$
+declare definition text; first_statement integer; next_statement integer;
+ original_statement text := $statement$ select count(*) filter(where rr.source_kind is distinct from 'official'),count(*) filter(where rr.source_kind='official' and (j.seccion_code is null or j.circuito_code is null or j.establecimiento_code is null or j.mesa_code is null)) into non_official_total,incomplete_lineage_total
+ from (select * from public.result_row where vote_kind = 'POSITIVO') rr join public.jurisdiction j on j.id=rr.jurisdiction_id
+ where ((j.seccion_code is not null and exists(select 1 from unnest(scope_districts,scope_sections) s(distrito_code,seccion_code) where (s.distrito_code,s.seccion_code)=(j.distrito_code,j.seccion_code))) or (j.seccion_code is null and p_distrito_code is not null and j.distrito_code=p_distrito_code))
+  and (p_election_id is null or rr.election_id=p_election_id) and (p_category_id is null or rr.category_id=p_category_id) and (p_distrito_code is null or j.distrito_code=p_distrito_code) and (p_seccion_code is null or j.seccion_code=p_seccion_code or j.seccion_code is null) and (p_circuito_code is null or j.circuito_code=p_circuito_code) and (p_establecimiento_code is null or j.establecimiento_code=p_establecimiento_code);
+$statement$;
+begin
+ definition:=pg_get_functiondef('workspace_api.official_facets(uuid,uuid,text,text,text,text)'::regprocedure);
+ first_statement:=position(' select count(*) filter' in definition);
+ next_statement:=position(' exclusions:=' in definition);
+ definition:=substring(definition from 1 for first_statement-1)||original_statement||substring(definition from next_statement);
+ definition:=replace(definition,'workspace_api.official_facets(','workspace_api.official_facets_pre592(');
+ execute definition;
+end $oracle$;
+alter function workspace_api.official_facets_pre592(uuid,uuid,text,text,text,text) owner to workspace_query_owner;
+revoke all on function workspace_api.official_facets_pre592(uuid,uuid,text,text,text,text) from public;
+grant execute on function workspace_api.official_facets_pre592(uuid,uuid,text,text,text,text) to authenticated;
+select plan(27);
 select ok((select strpos(definition,'trusted_workspace_claims')>0 and strpos(definition,'from workspace_private.workspace_context')>0 and strpos(definition,'trusted_workspace_claims')<strpos(definition,'from workspace_private.workspace_context') from (select pg_get_functiondef('workspace_private.authorized_section_scopes()'::regprocedure) definition) source),'trusted claims are captured before relation access');
 select ok((select pg_get_functiondef('workspace_api.official_facets(uuid,uuid,text,text,text,text)'::regprocedure) like '%source_kind=''official''%' and pg_get_functiondef('workspace_api.official_facets(uuid,uuid,text,text,text,text)'::regprocedure) like '%j.seccion_code is not null%' and pg_get_functiondef('workspace_api.official_facets(uuid,uuid,text,text,text,text)'::regprocedure) not like '%fiscalizacion%'),'facets use only exact official source rows without a raw fallback');
 select ok(not has_function_privilege('anon','workspace_api.official_facets(uuid,uuid,text,text,text,text)','EXECUTE') and not has_function_privilege('service_role','workspace_api.official_facets(uuid,uuid,text,text,text,text)','EXECUTE') and has_function_privilege('authenticated','workspace_api.official_facets(uuid,uuid,text,text,text,text)','EXECUTE'),'only authenticated reaches the official facets interface');
@@ -38,6 +63,22 @@ select ok(to_regclass('public.result_row_authorized_official_facets_idx') is not
 set local role authenticated;
 select set_config('request.jwt.claims',jsonb_build_object('sub','41000000-0000-0000-0000-000000000001','session_id','42000000-0000-0000-0000-000000000001','exp',floor(extract(epoch from statement_timestamp()+interval '10 minutes')))::text,true);
 select is(workspace_api.official_facets()->>'status','ok','active context is authorized');
+select ok((select bool_and(workspace_api.official_facets(e,c,d,s,ci,es)=workspace_api.official_facets_pre592(e,c,d,s,ci,es))
+ from (values
+ (null::uuid,null::uuid,null::text,null::text,null::text,null::text),
+ ('50000000-0000-0000-0000-000000000001',null,null,null,null,null),
+ ('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001',null,null,null,null),
+ ('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','02',null,null,null),
+ ('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','02','027',null,null),
+ ('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','02','027','00001',null),
+ ('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','02','027','00001','E1'),
+ (null,null,'02',null,null,null),
+ ('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','02','999',null,null)
+ ) selectors(e,c,d,s,ci,es)),
+ 'pre-592 and deployed functions return identical full JSON at every selector depth and for invalid scopes');
+select is(workspace_api.official_facets('50000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','02','027')->'exclusions',
+ '[{"reason":"non_official_source_rows","rows":1},{"reason":"official_rows_with_incomplete_lineage","rows":1}]'::jsonb,
+ 'selected section preserves coarse-district incomplete lineage and non-official breakdown in order');
 select is((workspace_api.official_facets()->>'total')::bigint,2::bigint,'official exact rows include normalized PBA distrito sections but exclude fiscalizacion and coarse province rows');
 select is(workspace_api.official_facets()->'exclusions','[{"reason":"non_official_source_rows","rows":1}]'::jsonb,'no-selector continuity reports bounded source exclusions without leaking ambiguous coarse rows');
 select ok(not (workspace_api.official_facets()->'truncated')::boolean and jsonb_array_length(workspace_api.official_facets()->'facets')=2,'authorized payload is bounded and complete');
