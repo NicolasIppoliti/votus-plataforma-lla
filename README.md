@@ -289,6 +289,11 @@ There is no root one-command hosted deploy or universal rollback here. Repositor
 publication, web deployment, database migration, and archive replay are separate
 boundaries requiring explicit target/revision approval and responsible operators.
 
+Before a release, run `pnpm --dir apps/web db:drift` with `VOTUS_HOSTED_DB_URL`
+set: it fails when `supabase/migrations` and the hosted history disagree. Apply
+pending migrations only through the [hosted migration procedure](docs/hosted-migrations.md)
+(`supabase db push --db-url`, never `--linked`).
+
 Use the [operational procedure](docs/operational-verification.md) for its bounded
 observation gate and private evidence rules, not as a deployment or repair script.
 The [results-explorer guide](docs/results-exploration.md) preserves the historical
