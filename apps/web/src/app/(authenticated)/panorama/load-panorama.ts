@@ -1,7 +1,7 @@
 import { profileServerSpan } from "@/lib/workspace/profile-server";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
-import { resolveDefaultElectoralContext } from "@/lib/context/default";
+import { resolveDefaultElectoralSelection } from "@/lib/context/default";
 import { parseElectoralContext, serializeElectoralContext, type ElectoralContext, type ElectoralContextSearchParams } from "@/lib/context/url";
 import { loadAuthorizedOfficialDrilldownEvidence, type OfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";
 import type { ExplorationFacetExclusion, FacetOption } from "@/lib/results/exploration";
@@ -14,6 +14,8 @@ export interface PanoramaData {
   href: string;
   context?: ElectoralContext;
   notice?: string;
+  /** Authorized elections exist but none is a unique default: ask, do not alarm. */
+  selectionRequired?: true;
   evidence?: OfficialDrilldownEvidence;
   circuitOptions?: readonly FacetOption[];
   exclusions: readonly ExplorationFacetExclusion[];
@@ -33,8 +35,10 @@ async function resolvePanorama(params: ElectoralContextSearchParams): Promise<Pa
     // bootstrap is not a barrier for this fresh session's authorized reads.
     await loadWorkspaceSelection();
     const repository = createAuthorizedOfficialFacetRepository();
-    const context = params.electionId !== undefined ? parsed.value : { ...await resolveDefaultElectoralContext(repository), sourceKind: parsed.value.sourceKind };
+    const resolved = params.electionId !== undefined ? null : await resolveDefaultElectoralSelection(repository);
+    const context = resolved ? { ...resolved.context, sourceKind: parsed.value.sourceKind } : parsed.value;
     if (params.electionId !== undefined || context.electionId) unavailable.context = context;
+    if (resolved?.status === "selection_required") return { ...unavailable, selectionRequired: true };
     if (context.sourceKind !== "official") return { ...unavailable, notice: "Fiscalización: fuente no oficial. Panorama solo muestra resultados oficiales; no se combinan fuentes." };
     if (context.circuitoCode || context.establecimientoCode || context.mesaCode !== undefined) return { ...unavailable, notice: "Panorama termina en el partido. Consulte esta selección detallada en Exploración." };
     const { electionId, categoryId, distritoCode, seccionCode } = context;

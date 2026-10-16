@@ -50,7 +50,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
   const leader = result && result.totalVotes > 0 && !tied ? ranked[0] : undefined;
   const completeness = ok?.completeness;
   const complete = completeness?.status === "complete";
-  const state = data.notice ?? (!evidence ? "La selección oficial predeterminada no está disponible." : evidence.status === "authorization_denied" ? "Acceso a resultados oficiales denegado. No se muestran cifras ni procedencia." : evidence.status === "empty" ? "La consulta autorizada no devolvió resultados. Sin datos no significa cero votos." : evidence.status !== "ok" ? `Resultados no disponibles (${evidence.status}). No se muestran cifras parciales.` : complete ? "Completitud oficial verificada para la sección." : "Completitud no confirmada; el primer lugar observado es provisional.");
+  const state = data.notice ?? (data.selectionRequired ? "No hay una selección predeterminada única. Elija elección, categoría y sección en la barra de contexto electoral." : !evidence ? "La selección oficial predeterminada no está disponible." : evidence.status === "authorization_denied" ? "Acceso a resultados oficiales denegado. No se muestran cifras ni procedencia." : evidence.status === "empty" ? "La consulta autorizada no devolvió resultados. Sin datos no significa cero votos." : evidence.status !== "ok" ? `Resultados no disponibles (${evidence.status}). No se muestran cifras parciales.` : complete ? "Completitud oficial verificada para la sección." : "Completitud no confirmada; el primer lugar observado es provisional.");
   return <>
     <section className={styles.workbench} aria-label="Panorama territorial">
       <div className={styles.map}>
@@ -61,7 +61,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
         {rosales && <RosalesAdministrativeDetails />}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
-        <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
+        <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : data.selectionRequired ? "needs-selection" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
         {result && <>
           <p>{result.electionYear} · {result.electionRound} · {result.categoryName}</p>
           <div className={styles.leader}><span>{complete ? "Primer lugar observado" : "En cabeza · provisional"}</span><strong>{result.totalVotes === 0 ? "Cero votos" : tied ? "Empate en primer lugar" : leader ? name(leader) : "Sin agrupaciones disponibles"}</strong>
