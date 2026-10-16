@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { revealExactResults } from "./SectionReferenceMap";
+import { renderToStaticMarkup } from "react-dom/server";
+import { SectionReferenceMap, revealExactResults } from "./SectionReferenceMap";
 import { shareFill } from "./reference-colors";
 import { REFERENCE_FILL, REFERENCE_LINE } from "./reference-colors";
+
+it("preserves default standalone controls and supports externally controlled panels", () => {
+  const props = { coordinates: [[[[-62, -38], [-61, -37], [-62, -38]]]], name: "Sección", label: "Oficial", resultId: "results", staticLabel: "Referencia" };
+  const standalone = renderToStaticMarkup(<SectionReferenceMap {...props} />);
+  expect(standalone).toContain("Mostrar mapa interactivo");
+  expect(standalone).toContain("Mapa opcional:");
+  const controlled = renderToStaticMarkup(<SectionReferenceMap {...props} active hideControls />);
+  expect(controlled).not.toContain("Mostrar mapa interactivo");
+  expect(controlled).not.toContain('role="img"');
+  expect(controlled).toContain("Mapa geográfico CNE");
+});
 
 describe("fixed electoral fill domain", () => {
   it("interpolates the same endpoints and midpoint independently of the election", () => {

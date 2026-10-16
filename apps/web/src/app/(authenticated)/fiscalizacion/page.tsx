@@ -18,6 +18,7 @@ import { repeatedParams } from "@/lib/results/query-params";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext, type ElectoralContext } from "@/lib/context/url";
 import { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR, createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 import { formatCount } from "@/lib/format/number";
 import type {
   AuthorizedFiscalizacionCoverage,
@@ -138,7 +139,7 @@ function renderExclusions(
       <ul aria-label={label}>
         {collection.items.map((item, index) => (
           <li key={`${item.reason}-${index}`}>
-            {item.reason}: {formatCount(item.rows)} filas
+            {facetExclusionLabel(item.reason)}: {formatCount(item.rows)} filas
           </li>
         ))}
       </ul>

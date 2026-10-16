@@ -9,6 +9,7 @@ import type { CircuitMapProps } from "@/components/maps/CircuitReferenceSvg";
 import { loadCircuitGeometry } from "./circuit-geometry";
 import styles from "./circuits.module.css";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 
 const CircuitSelection = createContext<{ selected: string | null; onSelect: (code: string) => void }>({ selected: null, onSelect: () => {} });
 export function CircuitSelectionProvider({ children, selection }: { children: ReactNode; selection?: { selected: string | null; onSelect: (code: string) => void } }) {
@@ -55,8 +56,8 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
     <p>Fuente: oficial · Todas las agrupaciones. Margen: (1.º − 2.º) / votos positivos.</p>
     <p>Supone que todas las mesas esperadas votan las categorías informadas por el distrito.</p>
     <p>Sin asignar a circuito: {u.catalogue_mesas_without_membership} mesas del catálogo; {u.membership_quarantined_mesas} mesas con pertenencia en cuarentena; {u.completeness_quarantines} cuarentenas de completitud; {u.unexpected_status_mesas} estados inesperados.</p>
-    {Object.entries(u.membership_quarantine_reasons).map(([reason, n]) => <p key={`m-${reason}`}>Cuarentena de pertenencia · {reason}: {n}</p>)}
-    {Object.entries(u.completeness_quarantine_reasons).map(([reason, n]) => <p key={`c-${reason}`}>Cuarentena de completitud · {reason}: {n}</p>)}
+    {Object.entries(u.membership_quarantine_reasons).map(([reason, n]) => <p key={`m-${reason}`}>Cuarentena de pertenencia · {facetExclusionLabel(reason)}: {n}</p>)}
+    {Object.entries(u.completeness_quarantine_reasons).map(([reason, n]) => <p key={`c-${reason}`}>Cuarentena de completitud · {facetExclusionLabel(reason)}: {n}</p>)}
     <Legend label="Leyenda de circuitos" entries={[
       { label: "Empate, sin votos positivos o lista sin mapear", encoding: "fill", color: NEUTRAL_COLOR },
       { label: "Rayado: escrutinio provisorio o superposición en la fuente", encoding: "hatch" },

@@ -120,6 +120,17 @@
   .simulation-context { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 .simulation-page-header p { max-width: none; }
+.seat-distribution__comparison { white-space: nowrap; }
+.simulation-comparison .table-scroll { overflow-x: auto; max-width: 100%; }
+.simulation-exact-table abbr { text-decoration: none; }
+@media (max-width: 760px) {
+  .simulation-geography > .simulation-geography-header { display: flex; flex-direction: column; align-items: stretch; }
+  .simulation-geography-header > div { min-width: 0; width: 100%; }
+  .simulation-comparison .simulation-exact-table { min-width: 42rem; width: max-content; table-layout: fixed; }
+  .simulation-exact-table :is(th, td) { padding: .5rem; font-size: .75rem; }
+  .simulation-exact-table th:first-child { position: sticky; left: 0; z-index: 1; width: 7rem; min-width: 7rem; max-width: 7rem; white-space: normal; overflow-wrap: anywhere; background: var(--surface, #0d1b28); }
+  .simulation-exact-table td { white-space: nowrap; }
+}
 .simulation-scenario-panel .field { gap: .25rem; }
 .simulation-scenario-panel .field label { font-size: .8125rem; }
 .simulation-renewal { padding-top: .5rem; }

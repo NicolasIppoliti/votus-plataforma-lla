@@ -102,9 +102,11 @@ it("rejects invalid source rather than selecting fiscalización", async () => {
 
 it("loads only authorized facets for URL context and fails closed", async () => {
   const facets = { elections: [], categories: [], distritos: [], secciones: [], circuitos: [], establecimientos: [], mesas: [], availableLevels: [] };
-  panorama.facets.mockResolvedValueOnce(facets);
+  panorama.facets.mockResolvedValue(facets);
   expect(await loadContextOptions("electionId=authorized-election&sourceKind=fiscalizacion")).toEqual({ context: { electionId: "authorized-election", sourceKind: "fiscalizacion" }, facets });
-  expect(panorama.facets).toHaveBeenLastCalledWith({ electionId: "authorized-election", sourceKind: "fiscalizacion" });
+  expect(panorama.facets).toHaveBeenCalledWith({ electionId: "authorized-election", sourceKind: "fiscalizacion" });
+  expect(panorama.facets).toHaveBeenCalledWith({});
+  panorama.facets.mockRejectedValue(new Error("unauthorized"));
   expect(await loadContextOptions("electionId=unauthorized-election")).toBeNull();
   expect(await loadContextOptions("sourceKind=unknown")).toBeNull();
 });

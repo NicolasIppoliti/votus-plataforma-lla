@@ -162,11 +162,11 @@ const AUTHORIZED_NO_ROWS_RESULT = {
 const FIGURE_SENTINELS = [
   "7 unidades observadas de 8",
   "South school",
-  "missing_identity: 1 filas",
+  "motivo no reconocido (missing_identity): 1 filas",
   "Guardian Party",
   "999",
   "Sin mapeo: 777; 5 votos, 1 filas",
-  "mixed_granularity: 2 filas",
+  "motivo no reconocido (mixed_granularity): 2 filas",
   "fiscal/a",
 ];
 
@@ -192,6 +192,19 @@ async function renderPage(params: PageParams = {}): Promise<string> {
   const page = await FiscalizacionPage({ searchParams: Promise.resolve(params) });
   return renderToStaticMarkup(page as ReactElement);
 }
+
+it("labels result exclusions in Spanish while retaining unknown reasons and counts", async () => {
+  mocks.facets.mockResolvedValue(FACETS);
+  mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+  mocks.result.mockResolvedValue({ ...AUTHORIZED_RESULT, exclusions: { items: [
+    { reason: "source_kind_official", rows: 3 },
+    { reason: "future_exclusion", rows: 2 },
+  ], total: 2, truncated: false } });
+  const html = await renderComplete();
+  expect(html).toContain("fuente oficial: 3 filas");
+  expect(html).toContain("motivo no reconocido (future_exclusion): 2 filas");
+  expect(html).not.toContain("source_kind_official");
+});
 
 async function renderComplete(): Promise<string> {
   return renderPage({ ...COMPLETE_SELECTION, sourceKind: "fiscalizacion" });
@@ -361,13 +374,13 @@ describe("FiscalizacionPage", () => {
       "Fuente: fiscalización; no es una muestra aleatoria; datos de votos no incluidos.",
       "7 unidades observadas de 8 del denominador oficial",
       "South school",
-      "missing_identity: 1 filas",
+      "motivo no reconocido (missing_identity): 1 filas",
       "Unidades sin cobertura: se muestran 100 de 101; respuesta truncada",
       "Estado del resultado: ok",
       "Guardian Party",
       "999",
       "Sin mapeo: 777; 5 votos, 1 filas",
-      "mixed_granularity: 2 filas",
+      "motivo no reconocido (mixed_granularity): 2 filas",
       "fiscal/a",
       "Resultados: se muestran 100 de 101; respuesta truncada",
     ]) {

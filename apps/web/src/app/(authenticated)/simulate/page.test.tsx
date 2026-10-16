@@ -31,6 +31,12 @@ describe("scenario handoff", () => {
       const params = Object.fromEntries(new URL(href!, "https://example.test").searchParams);
       const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve(params) }) as ReactElement);
       expect(html).toContain("Resultado (municipal de PBA)");
+      expect(html).toContain('class="seat-distribution__comparison"');
+      expect(html).toContain("Base → escenario");
+      expect(html).toContain('class="simulation-geography-header"');
+      expect(html).toContain('<abbr title="Votos escenario">V. esc.</abbr>');
+      expect(html).toContain('class="data-table simulation-exact-table"');
+      expect(outsideDisclosures(html)).not.toContain('class="seat-distribution__blocks"');
       expect(html).toContain("no es un resultado oficial");
       expect(html).not.toContain("Territorio no vinculado");
     }
@@ -91,7 +97,7 @@ describe("official 2025 base", () => {
 });
 
 describe("default-visible impact contracts", () => {
-  it("keeps seated and zero-seat images outside disclosures on each served render", async () => {
+  it("keeps seated images visible and every zero-seat image in a disclosure on each served render", async () => {
     const input = { ...ALLOCATION_INPUT, lists: [...ALLOCATION_INPUT.lists,
       { listId: "zero", listName: "Lista sin banca", votes: 0 },
     ] };
@@ -100,7 +106,8 @@ describe("default-visible impact contracts", () => {
       const panel = html.slice(html.indexOf('<aside class="simulation-scenario-panel"'), html.indexOf("</aside>"));
       const visible = outsideDisclosures(panel);
       expect(visible.includes('aria-label="LA LIBERTAD AVANZA: 5 de 9 bancas"')).toBe(true);
-      expect(visible.includes('aria-label="Lista sin banca: 0 de 9 bancas"')).toBe(true);
+      expect(visible.includes('aria-label="Lista sin banca: 0 de 9 bancas"')).toBe(false);
+      expect(panel).toMatch(/<details[^>]*><summary>Listas sin bancas \(1\)<\/summary>[\s\S]*aria-label="Lista sin banca: 0 de 9 bancas"/);
     }
   });
 
@@ -818,6 +825,21 @@ describe("simulate page — normal-user entry", () => {
 });
 
 describe("simulate page — complete statutory evidence", () => {
+  it("retains detailed seat strips on fresh served renders and reopens them after the e2e reload", async () => {
+    for (let render = 0; render < 2; render += 1) {
+      const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 });
+      const detail = markup.match(/<div[^>]*role="img" aria-label="Detalle de LA LIBERTAD AVANZA: 5 de 9 bancas"[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
+      expect(detail.match(/data-seat-state="awarded"/g)).toHaveLength(5);
+      expect(detail.match(/data-seat-state="empty"/g)).toHaveLength(4);
+    }
+    // Static rendering proves DOM retention, not Playwright role visibility:
+    // a fresh document closes native details, so the journey must reopen it.
+    const { readFileSync } = await import("node:fs");
+    const journey = readFileSync("e2e/simulate.spec.ts", "utf8");
+    const afterReload = journey.slice(journey.indexOf("    await page.reload();", journey.indexOf("const listASeats =")));
+    const beforeCounts = afterReload.slice(0, afterReload.indexOf("await expect(listASeats.locator"));
+    expect(beforeCounts).toContain('await seatChart.getByText("Cómo leer la distribución", { exact: true }).click();');
+  });
   it("draws nine individual renewal awards through the actual route", async () => {
     const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 });
 

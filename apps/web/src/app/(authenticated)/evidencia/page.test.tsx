@@ -48,7 +48,18 @@ it("labels facet exclusions in Spanish at the rendered page boundary and preserv
   const html = await render();
   expect(html).toContain("Opciones excluidas: filas de fuente no oficial; 3 fila(s).");
   expect(html).not.toContain("non_official_source_rows");
-  expect(html).toContain("Opciones excluidas: future_exclusion; 2 fila(s).");
+  expect(html).toContain("Opciones excluidas: motivo no reconocido (future_exclusion); 2 fila(s).");
+});
+it("translates source and school exclusions in the rendered rail", async () => {
+  const payload = bundle();
+  Object.assign(payload.reference, { source_exclusions: [{ kind: "fiscalizacion", reason: "non_official_source", rows: 4 }] });
+  Object.assign(payload.schools, { exclusions: [{ reason: "official_rows_without_mesa_granularity", rows: 5, votes: 60 }] });
+  mocks.bundle.mockResolvedValue(payload);
+  const html = await render();
+  expect(html).toContain("razón fuente no oficial; 4 fila(s)");
+  expect(html).toContain("Establecimientos: filas oficiales sin granularidad de mesa; 5 fila(s) / 60 voto(s)");
+  expect(html).not.toContain("non_official_source");
+  expect(html).not.toContain("official_rows_without_mesa_granularity");
 });
 it("does not request result evidence until an exact authorized section is chosen", async () => {
   expect(await render({})).toContain("Seleccione una elección, categoría, distrito y sección");
@@ -80,6 +91,14 @@ it("surfaces authorized refusal exclusions by reason without exposing unsafe fie
   expect(html).toContain("missing_lineage"); expect(html).toContain("2 fila(s) / 40 voto(s)");
   expect(html).not.toContain("UNSAFE_NOTES"); expect(html).not.toContain("archive-1");
 });
+it("translates non-official row reasons in rendered refusal evidence without losing counts", async () => {
+  const part = { ...authorized, status: "source_unavailable", reason: "non_official_source_rows", counts: { non_official_source_rows: 3 }, exclusions: [{ reason: "non_official_source_rows", rows: 3, votes: 40 }] };
+  mocks.bundle.mockResolvedValue({ result: part, schools: part, reference: part, provenance: part });
+  const html = await render();
+  expect(html).toContain("filas de fuente no oficial");
+  expect(html).not.toContain("non_official_source_rows");
+  expect(html).toContain("3 fila(s) / 40 voto(s)");
+});
 it("does not mistake partial or unknown completeness for complete coverage", async () => {
   mocks.completeness.mockResolvedValue(completeness("partial"));
   expect(await render()).toContain("Escrutinio parcial: 1 de 2");
@@ -89,8 +108,8 @@ it("does not mistake partial or unknown completeness for complete coverage", asy
 it("retains unassigned quarantine reasons even when circuit membership is unknown", async () => {
   mocks.circuits.mockResolvedValue({ ...authorized, status: "ok", level: "seccion", circuit_membership: "unknown", circuits: [], unassigned: { catalogue_mesas_without_membership: 2, membership_quarantined_mesas: 1, membership_quarantine_reasons: { conflicting_membership: 1 }, completeness_quarantines: 1, completeness_quarantine_reasons: { unreadable_key: 1 }, unexpected_status_mesas: 0 } });
   const html = await render();
-  expect(html).toContain("conflicting_membership: 1");
-  expect(html).toContain("unreadable_key: 1");
+  expect(html).toContain("motivo no reconocido (conflicting_membership): 1");
+  expect(html).toContain("motivo no reconocido (unreadable_key): 1");
   expect(html).not.toMatch(/\d+ de \d+ unidades visibles/);
 });
 it("reaches the exact partial circuit table with every omission category", async () => {

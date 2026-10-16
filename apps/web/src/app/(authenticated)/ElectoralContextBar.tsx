@@ -61,7 +61,11 @@ function ContextControls() {
     const next = { ...context, [key]: value || undefined };
     const hierarchy = ["electionId", "categoryId", "distritoCode", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode"] as const;
     const index = hierarchy.indexOf(key as typeof hierarchy[number]);
-    if (index >= 0) for (const child of hierarchy.slice(index + 1)) delete next[child];
+    if (index >= 0) for (const child of hierarchy.slice(index + 1)) {
+      // Category is an electoral dimension, not a parent of the territory.
+      if (key === "categoryId" && (child === "distritoCode" || child === "seccionCode")) continue;
+      delete next[child];
+    }
     const params = new URLSearchParams(query);
     for (const key of ELECTORAL_CONTEXT_KEYS) params.delete(key);
     for (const [key, value] of serializeElectoralContext(next)) params.set(key, value);

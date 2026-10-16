@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ReactElement } from "react";
 
 vi.mock("@/lib/workspace/selection", () => ({ loadWorkspaceSelection: async () => ({ status: "active" }) }));
@@ -95,6 +96,26 @@ function unavailableBundle() {
 }
 
 describe("DrilldownPage authorized official evidence", () => {
+  it("keeps secondary reading and geographic references in closed disclosures without dropping their text", async () => {
+    const html = renderToStaticMarkup(await DrilldownPage({ searchParams: Promise.resolve(COMPLETE_SECTION) }) as ReactElement);
+    expect(html).toMatch(/<details[^>]*><summary>Antes de interpretar<\/summary><p>Confirmá la fuente oficial/);
+    expect(html).toMatch(/<details[^>]*><summary>Referencias geográficas y fuentes<\/summary>/);
+    for (const label of ["Antes de interpretar", "Referencias geográficas y fuentes", "Mostrar resultados exactos"]) {
+      const opening = html.slice(0, html.indexOf(`<summary>${label}</summary>`)).split("<details").at(-1);
+      expect(opening).not.toMatch(/\bopen(?:=|\s|>)/);
+    }
+    expect(html).toContain("Argentina: referencia geográfica");
+    expect(html).toContain("Buenos Aires: referencia geográfica");
+    expect(html).toContain("FUENTE: Instituto Geográfico Nacional");
+    expect(html).toMatch(/<details[^>]*><summary>Mostrar resultados exactos<\/summary>/);
+  });
+
+  it("gives secondary summaries touch-sized targets and compacts only phone reading spacing", () => {
+    const css = readFileSync(new URL("./drilldown.module.css", import.meta.url), "utf8");
+    expect(css).toContain(".secondaryDisclosure > summary, .readingNote > summary");
+    expect(css).toContain(".inspector .total { padding-block: 12px; }");
+  });
+
   beforeEach(() => {
     mocks.circuits.mockReset();
     mocks.facets.mockReset().mockResolvedValue(FACETS);
@@ -537,8 +558,9 @@ describe("DrilldownPage authorized official evidence", () => {
       "El desglose por establecimientos no está disponible para la granularidad publicada por la fuente.",
     );
     expect(markup).toContain(
-      "Se excluyeron 2 fila(s) / 300 voto(s): official_rows_without_mesa_granularity.",
+      "Se excluyeron 2 fila(s) / 300 voto(s): filas oficiales sin granularidad de mesa.",
     );
+    expect(markup).not.toContain("official_rows_without_mesa_granularity");
     expect(markup).not.toContain("Votos oficiales por circuito y establecimiento");
     expect(markup).not.toContain("no superó la validación de integridad");
   });
@@ -559,7 +581,8 @@ describe("DrilldownPage authorized official evidence", () => {
 
     expect(markup).toContain("Se excluyeron 1 fila de fuente fiscalización / 20 votos del agregado oficial");
     expect(markup).toContain("Se excluyeron 1 fila de fuente fiscalización / 20 votos del agregado procedencia");
-    expect(markup).toContain("Se excluyeron 1 fila(s) de referencia de fuente fiscalización");
+    expect(markup).toContain("Se excluyeron 1 fila(s) de referencia de fuente fiscalización: fuente no oficial.");
+    expect(markup).not.toContain("non_official_source");
     expect(markup).not.toContain("320 votos");
   });
 
@@ -576,7 +599,7 @@ describe("DrilldownPage authorized official evidence", () => {
 
     const markup = await render();
 
-    expect(markup).toContain("Exclusión official_rows_without_section_identity: 2 fila(s).");
+    expect(markup).toContain("Exclusión motivo no reconocido (official_rows_without_section_identity): 2 fila(s).");
     expect(markup).toContain("Fuente excluida fiscalización: 3 fila(s).");
     expect(markup).not.toContain("undefined");
   });

@@ -1,0 +1,44 @@
+{
+  "python": "3.13.12",
+  "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+  "archive_sha256": "25558e7b73e8c273726ea12f04040e2fac8e693ad0eb866386502eb112bd2c0c",
+  "source": "national/2023-paso-wayback",
+  "conditions": "fresh subprocesses; warm/uncontrolled OS cache; no metrics in timed runs; companion when present; extraction/imports excluded; no DB",
+  "runs": [
+    {
+      "wall_seconds": 286.1437882911414,
+      "cpu_seconds": 281.15324,
+      "peak_rss_bytes": 3941859328,
+      "rows": 16600877,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 291.9265904161148,
+      "cpu_seconds": 279.338297,
+      "peak_rss_bytes": 3909910528,
+      "rows": 16600877,
+      "parser_scans": 2
+    },
+    {
+      "wall_seconds": 322.2492375411093,
+      "cpu_seconds": 302.68184,
+      "peak_rss_bytes": 3798155264,
+      "rows": 16600877,
+      "parser_scans": 2
+    }
+  ],
+  "medians": {
+    "wall_seconds": 291.9265904161148,
+    "cpu_seconds": 281.15324,
+    "peak_rss_bytes": 3909910528
+  },
+  "parity": {
+    "rows": 16600877,
+    "ordered_rows_sha256": "34abad27e499358ee584e9a1952344a440184c86af26d8f0ddb4f2b79634efc1",
+    "completeness_sha256": "cd179d5bcd87f317a70e9ddac9e5a2f38c67cc1ba362480c9f4bd83f00349379",
+    "metrics_sha256": "92fee3d2639463d0a57e204ef7fd3d2c86318b2b8a9865eac98644cf987b1214",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "parser_scans": 2,
+    "total_scans_with_completeness": 2
+  }
+}

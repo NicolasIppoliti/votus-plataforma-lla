@@ -3,9 +3,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { geoMercator, geoAzimuthalEqualArea, geoPath, geoContains } from '/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/apps/web/node_modules/d3-geo/src/index.js';
+const { geoMercator, geoAzimuthalEqualArea, geoPath, geoContains } = await import(new URL('../../../apps/web/node_modules/d3-geo/src/index.js', import.meta.url));
 
-const repository = '/Users/nicolasmateoippoliti/dev/votus-plataforma-lla';
+const repository = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 const output = fileURLToPath(new URL('./assets/', import.meta.url));
 const nationalHash = '70b0b5bba80ce1e924159fcceb72560a0b67435fff3d8d11e5b6e70590999af5';
 const provinceHash = '314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723';
@@ -16,7 +16,7 @@ async function verifiedJson(path, hash, size) {
 }
 const nationalSource = await verifiedJson(`${repository}/apps/web/public/geography/argentina-reference.${nationalHash}.geojson`, nationalHash, 736599);
 await verifiedJson(`${repository}/archive/geography/ign-buenos-aires-province.${provinceHash}.geojson`, provinceHash, 10282974);
-const python = spawnSync(`${repository}/etl/.venv/bin/python`, ['-c', `
+const python = spawnSync(process.env.PYTHON ?? 'python3', ['-c', `
 import json
 from shapely.geometry import shape, mapping
 source=json.load(open('${repository}/archive/geography/ign-buenos-aires-province.${provinceHash}.geojson'))

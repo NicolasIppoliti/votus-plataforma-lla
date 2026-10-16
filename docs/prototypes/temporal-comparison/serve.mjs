@@ -4,7 +4,7 @@ import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
-const referenceRoot = fileURLToPath(new URL('../territorial-exploration-prototype/assets/', import.meta.url));
+const referenceRoot = fileURLToPath(new URL('../territorial-exploration/assets/', import.meta.url));
 const referenceFiles = new Set(['demo-results.json', 'reference-paths.json', 'winner-reference-paths.json', 'plex-sans.woff2', 'plex-mono.woff2', 'plex-mono-semibold.woff2']);
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 

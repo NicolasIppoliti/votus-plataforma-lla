@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ExplorationOk } from "@/lib/results/exploration";
 import type { PanoramaData } from "./load-panorama";
 import { Panorama } from "./Panorama";
+import { CircuitOutcomes } from "../drilldown/CircuitOutcomes";
+import { ComparisonChildren } from "../compare/ComparisonChildren";
 import { OperationalBriefing } from "../OperationalBriefing";
 import { circuitBandColor } from "@/components/maps/reference-colors";
 import { circuitPresentation } from "@/lib/geography/circuit-presentation";
@@ -37,8 +39,29 @@ const data: PanoramaData = {
   },
 };
 
+it("labels exclusion and quarantine reasons across territorial surfaces (#501)", () => {
+  const evidence = data.evidence!;
+  if (evidence.status !== "ok" || evidence.circuitOutcomes?.status !== "ok") throw new Error("fixture must be ok");
+  const outcomes = { ...evidence.circuitOutcomes, unassigned: { ...evidence.circuitOutcomes.unassigned,
+    membership_quarantine_reasons: { non_official_source: 2 },
+    completeness_quarantine_reasons: { future_reason: 3 },
+  } };
+  const pages = [
+    renderToStaticMarkup(<Panorama data={{ ...data, exclusions: [{ reason: "official_rows_without_mesa_granularity", rows: 4 }], evidence: { ...evidence, circuitOutcomes: outcomes } }} />),
+    renderToStaticMarkup(<CircuitOutcomes outcomes={outcomes} rosales={false} view="legend" />),
+    renderToStaticMarkup(<ComparisonChildren outcomes={[outcomes, outcomes]} party="p6" />),
+  ];
+  for (const html of pages) {
+    expect(html).toContain("fuente no oficial");
+    expect(html).not.toContain("non_official_source");
+    expect(html).toContain("motivo no reconocido (future_reason): 3");
+  }
+  expect(pages[0]).toContain("filas oficiales sin granularidad de mesa: 4 filas");
+  expect(pages[0]).not.toContain("official_rows_without_mesa_granularity");
+});
+
 it("renders transient circuit emphasis without changing persistent selection (#446)", () => {
-  states.push("Coronel Rosales", "00248", "00249", null, "");
+  states.push("00248", "00249", null, "");
   const geometry = [...data.circuitGeometry!, { ...data.circuitGeometry![0]!, code: "00249" }];
   const html = renderToStaticMarkup(<Panorama data={{ ...data, circuitGeometry: geometry }} />);
   expect(html).toMatch(/stroke-width="3"[^>]*aria-pressed="false"[^>]*aria-label="Circuito 00249:/);
@@ -84,8 +107,7 @@ it("filters names locally while retaining all child rows and canonical links in 
   const cleared = renderToStaticMarkup(<PanoramaChildren data={data} />);
   expect(cleared).toContain("2 visibles · 2 circuitos disponibles");
   expect(cleared).not.toContain('<tr hidden="">');
-  states.push("Argentina");
-  const national = renderToStaticMarkup(<Panorama data={data} />);
+  const national = renderToStaticMarkup(<Panorama data={{ href: "/drilldown", exclusions: [], context: { sourceKind: "official" } }} />);
   expect(national).not.toContain("00249 — Sur");
   expect(national).not.toContain("220");
 });
@@ -177,11 +199,11 @@ it("filters and marks the selected circuit without changing its exact drilldown 
 });
 
 it("restores only a circuit present in the official Panorama outcomes (#445)", () => {
-  states.push("Coronel Rosales", "00248");
+  states.push("00248");
   const selected = renderToStaticMarkup(<Panorama data={data} />);
   expect(selected).toContain('aria-selected="true"');
   expect(selected).toContain("Circuito seleccionado: 00248");
-  states.push("Coronel Rosales", "unknown");
+  states.push("unknown");
   const invalid = renderToStaticMarkup(<Panorama data={data} />);
   expect(invalid).not.toContain('aria-selected="true"');
   expect(invalid).toContain("2 visibles · 2 circuitos disponibles");
@@ -225,7 +247,7 @@ it("renders the shared circuit encoding from the table outcomes on the real Pano
   expect(html).not.toContain('<details open');
   const presentation = circuitPresentation(circuits[0]!);
   expect(html).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
-  states.push("Coronel Rosales", "00248");
+  states.push("00248");
   const selected = renderToStaticMarkup(<Panorama data={mapped} />);
   expect(selected).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
   expect(selected).toContain('data-hatched="true"');

@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { expect, request, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
@@ -5,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
 import { writeWorkspaceStateFacts } from "./workspace-state-facts";
+import { withPanoramaResults } from "./panorama-result-fixture";
 import { expectMobileFormGeometry } from "./mobile-form-geometry";
 
 const environment = assertE2eEnvironment(process.env);
@@ -119,6 +121,85 @@ test("electoral context stays labelled and readable at 320px with explicit sourc
   await page.setViewportSize({ width: 1440, height: 500 });
   await expect(bar).toHaveCSS("position", "static");
   await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "static");
+});
+
+test("Panorama updates its figures when the shared category changes, keeping Rosales", async ({ page }) => {
+  await withPanoramaResults(async (fixture) => withReviewItem(page, async () => {
+    await page.goto("/");
+    const election = page.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true });
+    await expect(election).toBeEnabled();
+    const seededElection = election.locator("option").filter({ hasText: fixture.election.label });
+    if (await seededElection.count() === 0) {
+      const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+      await writeFile(test.info().outputPath("e2e-facts-panorama-election-options.json"), JSON.stringify({
+        electionControlCount: await election.count(),
+        electionEnabled: await election.isEnabled(),
+        electionOptions: await election.locator("option").allTextContents(),
+        categoryOptions: await bar.getByRole("combobox", { name: "Contexto electoral: Categoría", exact: true }).locator("option").allTextContents(),
+        source: await bar.getAttribute("data-source"),
+        loadingStatusCount: await bar.getByRole("status").count(),
+        unavailableContextCount: await bar.getByText("No se pudo verificar el contexto autorizado.", { exact: true }).count(),
+      }));
+    }
+    await expect(seededElection).toHaveAttribute("value", fixture.election.id);
+    await election.selectOption(fixture.election.id);
+    const category = page.getByRole("combobox", { name: "Contexto electoral: Categoría", exact: true });
+    await expect(category).toBeEnabled();
+    await expect.poll(async () => category.locator("option[value]:not([value=''])").count()).toBeGreaterThan(1);
+    const categories = fixture.categories.map(category => category.id);
+    await category.selectOption(categories[0]!);
+    await page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true }).selectOption("02");
+    await page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true }).selectOption("027");
+    const summary = page.getByRole("complementary", { name: "Lectura de la selección" });
+    const total = summary.locator("dt", { hasText: "Votos positivos oficiales" }).locator("+ dd");
+    try {
+      await expect(total).toBeVisible();
+    } catch (error) {
+      // Capture only electoral context and public render state, never storage,
+      // credentials or the full page. Keep the original assertion as the failure.
+      try {
+        const facts = await page.evaluate(() => {
+          const keys = ["electionId", "categoryId", "distritoCode", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode", "sourceKind"];
+          const params = new URL(window.location.href).searchParams;
+          const bar = document.querySelector('[aria-label="Contexto electoral"]');
+          const summary = document.querySelector('aside[aria-labelledby="panorama-result-heading"]');
+          const alerts = Array.from(document.querySelectorAll('[role="alert"], [role="status"]'));
+          return {
+            pathname: window.location.pathname,
+            searchParams: Object.fromEntries(keys.map(key => [key, params.getAll(key)])),
+            selectedOptions: Array.from(bar?.querySelectorAll("select") ?? []).map(select => ({
+              label: select.getAttribute("aria-label"), value: select.value, disabled: select.disabled,
+            })),
+            regions: {
+              context: !!bar,
+              summary: !!summary,
+              officialTotal: !!summary && Array.from(summary.querySelectorAll("dt")).some(node => node.textContent === "Votos positivos oficiales"),
+              alertCount: alerts.filter(node => node.getAttribute("role") === "alert").length,
+              statusCount: alerts.filter(node => node.getAttribute("role") === "status").length,
+            },
+            // Summary alerts describe the evidence status (including malformed /
+            // unavailable); they contain no result rows or provenance payloads.
+            summaryAlerts: Array.from(summary?.querySelectorAll('[role="alert"], [role="status"]') ?? []).map(node => node.textContent),
+          };
+        });
+        await writeFile(test.info().outputPath("e2e-facts-panorama-summary.json"), JSON.stringify(facts));
+      } catch { /* Diagnostics must not replace the original failure. */ }
+      throw error;
+    }
+    await expect(total).toHaveText("11.111");
+    await category.selectOption(categories[1]!);
+    await expect(category).toHaveValue(categories[1]!);
+    await expect(page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true })).toHaveValue("02");
+    await expect(page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue("027");
+    await expect(total).toBeVisible();
+    await expect(total).toHaveText("7.777");
+    const exact = page.getByRole("link", { name: "Ver resultados exactos en Exploración" });
+    await expect(exact).toHaveAttribute("href", new RegExp(`categoryId=${categories[1]}`));
+    await expect(page.locator("#panorama-territory")).toHaveCount(0);
+    await page.reload();
+    await expect(total).toBeVisible();
+    await expect(total).toHaveText("7.777");
+  }), test.info());
 });
 
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
@@ -496,7 +577,10 @@ test("Panorama exposes supporting limits once through a keyboard-operated disclo
   const toggle = disclosure.locator("summary");
   await expect(toggle).toHaveCount(1);
   await expect(disclosure).not.toHaveAttribute("open", "");
-  await expect(main.getByText("Resultados oficiales", { exact: true })).toBeVisible();
+  const source = page.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true });
+  await expect(source).toBeVisible();
+  await expect(source).toHaveValue("official");
+  await expect(source.locator("option:checked")).toHaveText("Oficial");
   await toggle.focus();
   await page.keyboard.press("Enter");
   await expect(disclosure).toHaveAttribute("open", "");
