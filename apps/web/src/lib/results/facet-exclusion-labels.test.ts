@@ -13,5 +13,5 @@ it.each([
 });
 
 it.each(["future_exclusion", "constructor", "__proto__", "toString"])("preserves unknown reason %s verbatim", reason => {
-  expect(facetExclusionLabel(reason)).toBe(reason);
+  expect(facetExclusionLabel(reason)).toBe(`motivo no reconocido (${reason})`);
 });
