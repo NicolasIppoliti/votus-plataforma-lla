@@ -1,6 +1,7 @@
 "use client";
 
 import type { KeyboardEvent, ReactNode } from "react";
+import Link from "next/link";
 
 export function AccountDisclosure({ children }: { children: ReactNode }) {
   function handleKeyDown(event: KeyboardEvent<HTMLDetailsElement>) {
@@ -14,6 +15,7 @@ export function AccountDisclosure({ children }: { children: ReactNode }) {
   return (
     <details className="workspace-account" onKeyDown={handleKeyDown}>
       <summary>Cuenta</summary>
+      <Link href="/onboarding?paso=alcance">Guía de Votus</Link>
       {children}
     </details>
   );

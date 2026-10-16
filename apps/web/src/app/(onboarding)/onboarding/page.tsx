@@ -6,7 +6,7 @@ import { loadOnboardingScope } from "./scope";
 import { formatFacetOptionLabel, type ExplorationFacetExclusion } from "@/lib/results/exploration";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { NAVIGATION_GROUPS, type NavigationItem } from "../navigation";
+import { NAVIGATION_GROUPS, type NavigationItem } from "../../(authenticated)/navigation";
 import { chooseOrganization, finishOnboarding } from "./actions";
 import { SubmitButton } from "./SubmitButton";
 import styles from "./onboarding.module.css";
