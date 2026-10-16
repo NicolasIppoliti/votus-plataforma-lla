@@ -531,7 +531,7 @@ export default async function SimulatePage({
         <p>Espacio de trabajo / Simulación</p>
         <h1>Simulación de escenarios</h1>
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
-        <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
+        <span className="simulation-authored-badge">{officialBaseLoaded ? "Base oficial 2025 · JEBA definitivo · las transferencias son supuestos" : "Datos aportados por quien consulta · no oficiales"}</span>
       </header>
       {scenarioProvenance ? <section aria-label="Procedencia del escenario">
         <p>Escenario: {scenarioProvenance.name}. Proyección 2027 · supuestos sin validar; no es un resultado oficial. Las bancas se calculan desde estos votos con el asignador de Simulación.</p>

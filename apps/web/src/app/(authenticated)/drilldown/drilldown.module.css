@@ -31,6 +31,8 @@
 .northMark { position: absolute; right: 24px; top: 27px; display: flex; flex-direction: column; gap: 5px; align-items: center; color: var(--secondary-ink); font: 0.75rem var(--font-mono); z-index: 1; }
 .northMark svg { width: 16px; height: 25px; stroke: var(--secondary-ink); fill: var(--surface-muted); }
 .territoryLabel { position: absolute; left: 50%; top: 51%; transform: translate(-35%, -50%); display: flex; align-items: center; gap: 12px; max-width: 285px; padding: 13px 17px; background: var(--surface); border: 1px solid var(--accent); border-radius: 4px; pointer-events: none; }
+/* Data maps keep the selection label in a corner so it never covers circuits (#610). */
+.mapPanel[data-map-kind="data"] .territoryLabel { left: 23px; top: 52px; transform: none; max-width: 60%; padding: 7px 10px; }
 .territoryLabel > svg { color: var(--accent); flex-shrink: 0; }
 .territoryLabel strong { display: block; font-size: 17px; font-weight: 500; overflow-wrap: anywhere; }
 .territoryLabel small { display: block; color: var(--secondary-ink); font-size: 0.75rem; margin-top: 3px; }

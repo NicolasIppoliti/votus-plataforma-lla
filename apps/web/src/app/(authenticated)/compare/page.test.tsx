@@ -451,6 +451,12 @@ describe("authorized comparison page", () => {
     expect(conflicting).not.toMatch(/<h2>[^<]*nombres contradictorios/);
     expect(conflicting).toContain('<option value="027" selected="">027 — nombres contradictorios</option>');
   });
+  it("keeps hashes inside provenance disclosures and says the leader did not change (#615)", async () => {
+    const markup = await render(PARAMS);
+    const outsideDetails = markup.replace(/<details\b[\s\S]*?<\/details>/g, "");
+    expect(outsideDetails).not.toContain("SHA-256");
+    expect(markup).not.toContain(": sin cambio.");
+  });
   it("keeps an exactly matching option unchanged", async () => { const markup = await render({ ...PARAMS, distritoCode: undefined, seccionCode: undefined }); expect(markup).toContain('<option value="02">02 — Buenos Aires</option>'); expect(markup).not.toContain("nombres contradictorios"); });
   it("excludes one-sided district codes while disclosing their side-specific counts", async () => { leftDistricts = [...leftDistricts, { code: "99", name: "Distrito unilateral izquierdo", nameStatus: "present", nameVariantCount: 1 }]; rightDistricts = [...rightDistricts, { code: "98", name: "Distrito unilateral derecho", nameStatus: "present", nameVariantCount: 1 }]; const markup = await render({ ...PARAMS, distritoCode: undefined, seccionCode: undefined }); expect(markup).not.toContain('value="99"'); expect(markup).not.toContain('value="98"'); expect(markup).not.toContain("Distrito unilateral izquierdo"); expect(markup).not.toContain("Distrito unilateral derecho"); expect(markup).toContain("Opciones no compartidas — Distrito: 1 Lado A / 1 Lado B (disponibles solo en ese lado)."); });
   it("excludes one-sided section codes and discloses counts separately after a shared district", async () => { leftSections = [...leftSections, { code: "999", name: "Sección unilateral izquierda", nameStatus: "present", nameVariantCount: 1 }]; rightSections = [...rightSections, { code: "998", name: "Sección unilateral derecha", nameStatus: "present", nameVariantCount: 1 }]; const markup = await render({ ...PARAMS, seccionCode: undefined }); expect(markup).not.toContain('value="999"'); expect(markup).not.toContain('value="998"'); expect(markup).not.toContain("Sección unilateral izquierda"); expect(markup).not.toContain("Sección unilateral derecha"); expect(markup).toContain("Opciones no compartidas — Distrito: 0 Lado A / 0 Lado B (disponibles solo en ese lado)."); expect(markup).toContain("Opciones no compartidas — Sección: 1 Lado A / 1 Lado B (disponibles solo en ese lado)."); });
@@ -523,7 +529,7 @@ describe("authorized comparison page", () => {
     expect(tableScroll).toContain('tabindex="0"');
     expect(markup.match(/<table\b/g)).toHaveLength(1);
     for (const text of ["60,00 %", "40,00 %", "55,00 %", "45,00 %", "-5,00 puntos porcentuales", "+5,00 puntos porcentuales"]) expect(tableScroll).toContain(text);
-    expect(markup).toContain("02/027: sin cambio.");
+    expect(markup).toContain("02/027: mismo primer lugar en ambos lados.");
     const rails = [...markup.matchAll(/<article\b[^>]*class="official-compare__evidence-side"[^>]*>[\s\S]*?<\/article>/g)].map(([html]) => html);
     expect(rails).toHaveLength(2);
     for (const [index, side] of ["A", "B"].entries()) {

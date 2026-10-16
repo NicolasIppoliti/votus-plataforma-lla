@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState, type ComponentType, typ
 import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import type { OfficialSectionCircuitOutcomes, CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
-import { circuitPresentation } from "@/lib/geography/circuit-presentation";
+import { circuitPresentation, circuitWinnerKey } from "@/lib/geography/circuit-presentation";
 import { circuitColor, circuitBandColor, Legend, PARTY_COLORS, NEUTRAL_COLOR } from "@/components/maps/reference-colors";
 import type { CircuitMapProps } from "@/components/maps/CircuitReferenceSvg";
 import { loadCircuitGeometry } from "./circuit-geometry";
@@ -47,10 +47,12 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
     {!membershipUnknown && (rosales ? <>
       {!Map && !failed && <Alert variant="caveat">Preparando mapa de circuitos…</Alert>}
       {failed && <><Alert variant="unavailable">Geometría no disponible; consulte la tabla exacta.</Alert><button type="button" className={styles.select} onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>Reintentar mapa de circuitos</button></>}
-      {Map && geometry && <Map geometry={geometry} circuits={outcomes.circuits} selected={selected} onSelect={setSelected} />}
+      {Map && geometry && <Map geometry={geometry} circuits={outcomes.circuits} selected={selected} onSelect={setSelected} legend={false} />}
     </> : <Alert variant="caveat">Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</Alert>)}
     </>}
     {(view === "map" || view === "legend") && <>
+    <Legend label="Ganadores por circuito" entries={[...circuitWinnerKey(outcomes.circuits).map(({ name, color }) => ({ label: `Ganador: ${name}`, encoding: "fill" as const, color })),
+      { label: "Neutro: empate, sin votos positivos o lista sin mapear", encoding: "fill" as const, color: NEUTRAL_COLOR }]} />
     <Legend label="Intensidad del margen" entries={(["light", "medium", "intense"] as const).map((band, index) => ({ label: ["<5 pp · claro", "5–15 pp · medio", ">15 pp · intenso"][index]!, encoding: "fill", color: circuitBandColor(PARTY_COLORS[1], band) }))} />
     <details><summary>Notas de la leyenda</summary>
     <p>Fuente: oficial · Todas las agrupaciones. Margen: (1.º − 2.º) / votos positivos.</p>

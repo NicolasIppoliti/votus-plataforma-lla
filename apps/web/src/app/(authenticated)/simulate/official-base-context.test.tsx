@@ -60,3 +60,15 @@ it("leaves an explicit scenario untouched", async () => {
   const html = await render({ scenario: "persistencia" });
   expect(html).not.toContain("Base oficial 2025 · JEBA definitivo");
 });
+
+it("labels the official base as official, never as data provided by the user (#619)", async () => {
+  const html = await render({});
+  expect(html).toContain('<span class="simulation-authored-badge">Base oficial 2025 · JEBA definitivo · las transferencias son supuestos</span>');
+  expect(html).not.toContain("Datos aportados por quien consulta · no oficiales");
+});
+
+it("keeps the user-data badge when no official base is loaded (#619)", async () => {
+  facets.mockRejectedValue(new Error("unavailable"));
+  const html = await render({});
+  expect(html).toContain('<span class="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>');
+});

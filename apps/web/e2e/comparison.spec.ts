@@ -411,7 +411,7 @@ test.describe("authorized official comparison", () => {
       await expect(page.getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
       await expect(sharedSection).toBeFocused();
       const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ electionId: identity.electionIds[0], categoryId: identity.categoryId, bElectionId: identity.electionIds[1], bCategoryId: identity.categoryId, sourceKind: "official", distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
-      const main = page.getByRole("main"); await expect(main).toContainText("sin cambio"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
+      const main = page.getByRole("main"); await expect(main).toContainText("mismo primer lugar en ambos lados"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
       await expect(main).toContainText(identity.archiveEntryIds[0]!); await expect(main).toContainText(identity.archiveEntryIds[1]!); await expect(main).toContainText("SHA-256"); await expect(main).not.toContainText("https://"); await expect(main).not.toContainText("example.test");
       await main.locator('[data-applied-context] > summary').click();
       const leftSide = main.getByRole("article", { name: "Lado A", exact: true });
