@@ -1,10 +1,40 @@
 {
   "round": 5,
-  "status": "blocked",
-  "reason": "Authorized frozen-lockfile installation failed; browser dependencies unavailable.",
-  "captures": [],
-  "pairs": [],
-  "visualReviewPerformed": false,
+  "status": "visually-inventoried-awaiting-independent-verification",
+  "runId": "38928330948",
+  "commit": "2196d8f2",
+  "branch": "develop",
+  "artifact": "visual-evidence-r5",
+  "localExtraction": "/tmp/r5-2196/visual-evidence-r5",
+  "pairs": {
+    "pages": ["panorama", "exploracion", "comparacion", "evidencia", "simulacion"],
+    "widths": [1440, 390, 320],
+    "pathTemplate": "visual-evidence-r5-R5-<page>-approved-pair-at-<width>px/pair-<page>-<width>.png",
+    "countViewed": 15,
+    "scale": "1:1 CSS pixels; prototype left, production right"
+  },
+  "productionOnly": [
+    "visual-evidence-r5-R5-prod-06c3a-90px-no-approved-prototype-/production-municipal-390.png",
+    "visual-evidence-r5-R5-prod-51b24-20px-no-approved-prototype-/production-municipal-320.png",
+    "visual-evidence-r5-R5-prod-6c573-90px-no-approved-prototype-/production-fiscalizacion-390.png",
+    "visual-evidence-r5-R5-prod-e65d9-20px-no-approved-prototype-/production-fiscalizacion-320.png"
+  ],
+  "visualReviewPerformed": true,
+  "inventory": "current-2196d8f2.md",
+  "gateEvidence": {
+    "source": "parent-provided CI result, not locally rerun",
+    "logLine": "Browser lane passed: 8 passed, 0 skipped, disposable stack cleaned"
+  },
   "historicalBeforeAvailable": false,
-  "notes": "NOTES.md"
+  "historicalAudit": "findings.md",
+  "historicalBlockedAttempt": {
+    "status": "blocked",
+    "reason": "Authorized frozen-lockfile installation failed; browser dependencies unavailable.",
+    "captures": [],
+    "pairs": [],
+    "visualReviewPerformed": false,
+    "notes": "NOTES.md"
+  },
+  "pngsCommitted": false,
+  "artifactRetentionDays": 14
 }
