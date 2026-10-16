@@ -87,6 +87,19 @@ async function capture(page: Page, file: string): Promise<Measurement> {
     }, { timeout: 15000, message: `${file}: map must settle` }).toBeGreaterThanOrEqual(2);
   }
   await expect(signal(page, "capture-loading-cleared", page.getByText(/Cargando contexto autorizado|Preparando contorno de referencia/))).toHaveCount(0);
+  if (file.startsWith("production-")) {
+    // Capture-only normalization: full-page stitching must not paint sticky
+    // context bars over content, or retain focus from the setup journey.
+    await page.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      for (const element of document.querySelectorAll<HTMLElement>("*")) {
+        const position = getComputedStyle(element).position;
+        if (position === "sticky" || position === "fixed") {
+          element.style.setProperty("position", "static", "important");
+        }
+      }
+    });
+  }
   const size = await page.evaluate(() => ({
     width: innerWidth, viewportHeight: innerHeight,
     documentHeight: document.documentElement.scrollHeight,
