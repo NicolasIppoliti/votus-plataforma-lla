@@ -556,8 +556,9 @@ describe("DrilldownPage authorized official evidence", () => {
       "El desglose por establecimientos no está disponible para la granularidad publicada por la fuente.",
     );
     expect(markup).toContain(
-      "Se excluyeron 2 fila(s) / 300 voto(s): official_rows_without_mesa_granularity.",
+      "Se excluyeron 2 fila(s) / 300 voto(s): filas oficiales sin granularidad de mesa.",
     );
+    expect(markup).not.toContain("official_rows_without_mesa_granularity");
     expect(markup).not.toContain("Votos oficiales por circuito y establecimiento");
     expect(markup).not.toContain("no superó la validación de integridad");
   });
@@ -578,7 +579,8 @@ describe("DrilldownPage authorized official evidence", () => {
 
     expect(markup).toContain("Se excluyeron 1 fila de fuente fiscalización / 20 votos del agregado oficial");
     expect(markup).toContain("Se excluyeron 1 fila de fuente fiscalización / 20 votos del agregado procedencia");
-    expect(markup).toContain("Se excluyeron 1 fila(s) de referencia de fuente fiscalización");
+    expect(markup).toContain("Se excluyeron 1 fila(s) de referencia de fuente fiscalización: fuente no oficial.");
+    expect(markup).not.toContain("non_official_source");
     expect(markup).not.toContain("320 votos");
   });
 
@@ -595,7 +597,7 @@ describe("DrilldownPage authorized official evidence", () => {
 
     const markup = await render();
 
-    expect(markup).toContain("Exclusión official_rows_without_section_identity: 2 fila(s).");
+    expect(markup).toContain("Exclusión motivo no reconocido (official_rows_without_section_identity): 2 fila(s).");
     expect(markup).toContain("Fuente excluida fiscalización: 3 fila(s).");
     expect(markup).not.toContain("undefined");
   });

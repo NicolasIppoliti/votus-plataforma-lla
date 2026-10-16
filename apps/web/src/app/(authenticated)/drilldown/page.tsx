@@ -130,8 +130,7 @@ function facetExclusionNotes(
   overflow = false,
 ): ReactNode {
   return exclusions.map((exclusion) => {
-    const displayLabel = facetExclusionLabel(exclusion.reason);
-    const label = displayLabel === exclusion.reason ? `razón no reconocida (${exclusion.reason})` : displayLabel;
+    const label = facetExclusionLabel(exclusion.reason);
     return (
       <p role="note" key={exclusion.reason}>
         {overflow
@@ -162,7 +161,7 @@ function schoolExclusionNotes(
       {sourceExclusionNotes(sourceExclusions, "establecimiento")}
       {exclusions.map((exclusion) => (
         <p role="note" key={exclusion.reason}>
-          Se excluyeron {formatCount(exclusion.rows)} fila(s) / {formatCount(exclusion.votes)} voto(s): {exclusion.reason}.
+          Se excluyeron {formatCount(exclusion.rows)} fila(s) / {formatCount(exclusion.votes)} voto(s): {facetExclusionLabel(exclusion.reason)}.
         </p>
       ))}
     </>
@@ -174,11 +173,11 @@ function RefusalEvidence({ evidence }: { evidence: EvidenceRefusalWithDetails["e
   return evidence.map((part) => (
     <section key={part.part} aria-label={`Evidencia de rechazo: ${part.part}`}>
       <h2>{part.part}</h2>
-      {part.reason ? <p>{part.reason}</p> : null}
+      {part.reason ? <p>{facetExclusionLabel(part.reason)}</p> : null}
       {part.counts ? <p role="note">Conteos: {formatCounts(part.counts)}.</p> : null}
       {part.exclusions?.map((entry) => (
         <p role="note" key={`${part.part}-exclusion-${entry.reason}`}>
-          Exclusión {entry.reason}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}
+          Exclusión {entry.reason === undefined ? "motivo no informado" : facetExclusionLabel(entry.reason)}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}
         </p>
       ))}
       {part.sourceExclusions?.map((entry) => (
@@ -340,7 +339,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <h3 id="reference-heading">Referencia electoral autorizada</h3>
         {reference.sourceExclusions.map((entry) => (
           <p role="note" key={`reference-${entry.kind}`}>
-            Se excluyeron {formatCount(entry.rows)} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {entry.reason}.
+            Se excluyeron {formatCount(entry.rows)} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {facetExclusionLabel(entry.reason)}.
           </p>
         ))}
         <TableRegion label="Referencia electoral autorizada">
