@@ -56,8 +56,9 @@ export function Panorama({ data }: { data: PanoramaData }) {
       <div className={styles.map}>
         <p className={styles.trail}>Territorio del contexto electoral</p>
         <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? <RosalesTerritoryName /> : context?.seccionCode ? `Sección ${context.seccionCode} · distrito ${context.distritoCode}` : "Seleccione una sección en la barra de contexto"}</p></header>
-        {rosales && <RosalesAdministrativeDetails />}
         {mapped ? <section className={styles.circuitMap} aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} highlighted={selectable ? focusedCircuit ?? hoveredCircuit : null} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno de la sección seleccionada" referenceRosales consolidatedLimits /> : <div className={styles.noMap}><p>Mapa de referencia no disponible para esta selección.</p><p>No se reutilizan cifras de Coronel Rosales para representar otro territorio.</p></div>}
+        {/* Codes stay in detail below the map so the map remains above the fold (#458, #455). */}
+        {rosales && <RosalesAdministrativeDetails />}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
         <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>

@@ -25,3 +25,11 @@ it("lets the reference locator use its shared compact dimensions without inline 
   // enlarge it and defeat the above-the-fold layout at 1440×900.
   expect(html).not.toMatch(/style="[^"]*(?:height|min-height):280px/);
 });
+
+it("places administrative codes after the map so the map stays above the fold (#458)", () => {
+  const html = renderToStaticMarkup(<Panorama data={{ href: "/drilldown", exclusions: [] }} />);
+  const map = html.indexOf('aria-label="Mapa territorial de referencia"');
+  const codes = html.indexOf("<summary>Códigos administrativos</summary>");
+  expect(map).toBeGreaterThan(-1);
+  expect(codes).toBeGreaterThan(map);
+});
