@@ -17,6 +17,33 @@ def _sql(name: str) -> str:
     return (MIGRATIONS / name).read_text(encoding="utf-8").lower()
 
 
+def test_official_facet_exclusions_are_scope_first_and_reversible() -> None:
+    up = _sql("20261016000000_scope_official_facet_exclusions.sql")
+    down = _sql("down/20261016000000_scope_official_facet_exclusions.down.sql")
+    for fragment in (
+        "create index result_row_facet_exclusion_scope_idx",
+        "on public.result_row(jurisdiction_id,election_id,category_id)",
+        "include(source_kind) where vote_kind='positivo'"
+        " and source_kind is distinct from 'official'",
+        "select distinct distrito_code,seccion_code",
+        "union all",
+        "cross join lateral",
+        "fact.jurisdiction_id=j.id",
+        "offset 0",
+    ):
+        assert fragment in up
+    assert "drop index public.result_row_facet_exclusion_scope_idx" in down
+    for migration in (up, down):
+        assert "statement_timeout" not in migration
+        assert "pg_get_functiondef(" in migration
+        assert "execute definition" in migration
+        assert "with inherit false, set true" in migration
+        assert "drop role %i" in migration
+        assert "had_create" in migration
+        assert "raise exception" in migration
+    assert "where ((j.seccion_code is not null and exists" in down
+
+
 def test_non_positive_vote_kinds_migration_and_reverse() -> None:
     sql = _sql("20261015300000_non_positive_vote_kinds.sql")
     assert "vote_kind text not null default 'positivo'" in sql
@@ -902,8 +929,8 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         for sql in (semantic_sql, plan_sql)
         for count in re.findall(r"select\s+plan\((\d+)\);", sql)
     ]
-    assert phase_plans == [16, 17]
-    assert sum(phase_plans) == 33
+    assert phase_plans == [16, 18]
+    assert sum(phase_plans) == 34
 
     for required in (
         "results_exploration_facets",
@@ -1260,6 +1287,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20261016000000_scope_official_facet_exclusions.down.sql",
         "\\ir ../migrations/down/20261015300000_non_positive_vote_kinds.down.sql",
         "\\ir ../migrations/down/20261015200000_projection_receipt.down.sql",
         "\\ir ../migrations/down/20261015100000_jurisdiction_merge_key_index.down.sql",
@@ -1370,6 +1398,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20261015100000_jurisdiction_merge_key_index.sql",
         "\\ir ../migrations/20261015200000_projection_receipt.sql",
         "\\ir ../migrations/20261015300000_non_positive_vote_kinds.sql",
+        "\\ir ../migrations/20261016000000_scope_official_facet_exclusions.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1384,7 +1413,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "76 as migration_inventory_count",
+        "77 as migration_inventory_count",
         "20261014000000-down,20261013000000-down,20261012000000-down,20261011000000-down,20260923000001-down",
         "20260923000001-up,20261011000000-up,20261012000000-up,20261013000000-up,20261014000000-up",
         "0037 internal facets base remained directly executable",
@@ -1798,7 +1827,7 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
             "results_exploration_reporting_level(",
         )
     )
-    assert "select plan(17)" in plan_proof
+    assert "select plan(18)" in plan_proof
     assert "selected_shapes<>1" in semantic_proof
 
 
@@ -2458,7 +2487,7 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     assert "result_row_official_district_scope_idx" in school_block
     assert "result_row_non_official_scope_idx" in school_block
 
-    assert "select plan(17);" in scale
+    assert "select plan(18);" in scale
     # One public wrapper invocation dispatches once to the batched core. The small physical-scan
     # allowance accommodates planner/parallel shape while still rejecting both no access and the
     # old scan-per-jurisdiction algorithm.

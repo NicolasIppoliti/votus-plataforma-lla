@@ -2,7 +2,7 @@
 SET statement_timeout='120s';
 -- Disposable high-cardinality EXPLAIN/plan proof; fixture state is committed by setup.
 begin;
-select plan(17);
+select plan(18);
 create temporary table scale_plan_evidence (label text primary key,representative_result_rows bigint not null,plan jsonb not null) on commit drop;
 do $$ declare evidence jsonb; representative_result_rows constant bigint := 122295; begin
   execute $plan$explain (analyze, buffers, format json)
@@ -224,5 +224,32 @@ select diag(format(
   coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0),
   jsonb_path_query_array(plan, '$.**."Index Name"')
 )) from scale_plan_evidence order by label;
+-- Plan the exclusion statement extracted from the deployed function, not a
+-- hand-maintained replica. The surrounding fixture has >700k unrelated facts;
+-- the authorized section is deliberately narrow, as on the hosted slow path.
+do $$ declare definition text; statement text; evidence jsonb; begin
+ definition:=pg_get_functiondef('workspace_api.official_facets(uuid,uuid,text,text,text,text)'::regprocedure);
+ statement:=substring(definition from position(' select count(*) filter' in definition) for position(' exclusions:=' in definition)-position(' select count(*) filter' in definition));
+ statement:=replace(statement,'into non_official_total,incomplete_lineage_total','');
+ statement:=replace(statement,'scope_districts','ARRAY[''02'']::text[]');
+ statement:=replace(statement,'scope_sections','ARRAY[''001'']::text[]');
+ statement:=replace(statement,'p_distrito_code','NULL::text');
+ statement:=replace(statement,'p_seccion_code','NULL::text');
+ statement:=replace(statement,'p_circuito_code','NULL::text');
+ statement:=replace(statement,'p_establecimiento_code','NULL::text');
+ statement:=replace(statement,'p_election_id','NULL::uuid');
+ statement:=replace(statement,'p_category_id','NULL::uuid');
+ execute 'explain (analyze,buffers,format json) '||statement into evidence;
+ insert into scale_plan_evidence values ('authorized_facets_exclusions', (select count(*) from public.result_row), evidence);
+end $$;
+select ok((select not exists (
+ select 1 from jsonb_path_query(plan,'$.** ? (@."Relation Name" == "result_row")') node
+ where coalesce(node->>'Index Cond','') not like '%jurisdiction_id%'
+ ) and jsonb_path_exists(plan,'$.** ? (@."Relation Name" == "result_row")')
+ from scale_plan_evidence where label='authorized_facets_exclusions'),
+ 'deployed authorized facet exclusions use jurisdiction-keyed fact probes, never a full fact scan');
+select diag(format('authorized_facets_exclusions rows=%s execution_ms=%s plan=%s',
+ representative_result_rows,plan->0->>'Execution Time',plan))
+ from scale_plan_evidence where label='authorized_facets_exclusions';
 select * from finish();
 rollback;
