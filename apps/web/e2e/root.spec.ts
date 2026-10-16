@@ -151,7 +151,8 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
     await page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true }).selectOption("02");
     await page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true }).selectOption("027");
     const summary = page.getByRole("complementary", { name: "Lectura de la selección" });
-    const total = summary.locator("dt", { hasText: "Votos positivos oficiales" }).locator("+ dd");
+    // #458 states the official denominator in the headline metric label.
+    const total = summary.getByText(/^Sobre [\d.]+ votos positivos oficiales$/);
     try {
       await expect(total).toBeVisible();
     } catch (error) {
@@ -173,7 +174,7 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
             regions: {
               context: !!bar,
               summary: !!summary,
-              officialTotal: !!summary && Array.from(summary.querySelectorAll("dt")).some(node => node.textContent === "Votos positivos oficiales"),
+              officialTotal: !!summary && Array.from(summary.querySelectorAll("span")).some(node => /^Sobre [\d.]+ votos positivos oficiales$/.test(node.textContent ?? "")),
               alertCount: alerts.filter(node => node.getAttribute("role") === "alert").length,
               statusCount: alerts.filter(node => node.getAttribute("role") === "status").length,
             },
@@ -186,19 +187,19 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
       } catch { /* Diagnostics must not replace the original failure. */ }
       throw error;
     }
-    await expect(total).toHaveText("11.111");
+    await expect(total).toHaveText("Sobre 11.111 votos positivos oficiales");
     await category.selectOption(categories[1]!);
     await expect(category).toHaveValue(categories[1]!);
     await expect(page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true })).toHaveValue("02");
     await expect(page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue("027");
     await expect(total).toBeVisible();
-    await expect(total).toHaveText("7.777");
+    await expect(total).toHaveText("Sobre 7.777 votos positivos oficiales");
     const exact = page.getByRole("link", { name: "Ver resultados exactos en Exploración" });
     await expect(exact).toHaveAttribute("href", new RegExp(`categoryId=${categories[1]}`));
     await expect(page.locator("#panorama-territory")).toHaveCount(0);
     await page.reload();
     await expect(total).toBeVisible();
-    await expect(total).toHaveText("7.777");
+    await expect(total).toHaveText("Sobre 7.777 votos positivos oficiales");
   }), test.info());
 });
 
@@ -596,7 +597,7 @@ test("Panorama exposes supporting limits once through a keyboard-operated disclo
 
 test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }, testInfo) => {
   await withReviewItem(page, async () => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   try {
@@ -614,11 +615,53 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
   expect(actionBox).not.toBeNull();
   expect(attentionBox).not.toBeNull();
   expect(attentionBox!.y).toBeGreaterThan(actionBox!.y + actionBox!.height);
-  const map = main.getByRole("region", { name: "Mapa territorial de referencia" });
+  const map = main.getByRole("region", { name: "Mapa territorial de referencia", exact: true }).or(main.getByRole("region", { name: "Ganadores por circuito", exact: true }));
   const summary = main.getByRole("complementary", { name: "Lectura de la selección" });
   const mapBox = await map.boundingBox();
   const summaryBox = await summary.boundingBox();
-  expect(summaryBox!.x).toBeGreaterThanOrEqual(mapBox!.x + mapBox!.width);
+  try {
+    expect(summaryBox!.x).toBeGreaterThanOrEqual(mapBox!.x + mapBox!.width);
+    expect(mapBox!.y).toBeGreaterThanOrEqual(0);
+    expect(mapBox!.y + mapBox!.height).toBeLessThanOrEqual(900);
+    expect(summaryBox!.y + summaryBox!.height).toBeLessThanOrEqual(900);
+    // Every supplied headline figure must fit without scrolling, not merely its container.
+    for (const metric of await summary.locator("strong, b").all()) {
+      const box = await metric.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+    }
+  } catch (error) {
+    const facts = await page.evaluate(() => {
+      const geometry = (element: Element | null) => {
+        if (!element) return null;
+        const { y, height } = element.getBoundingClientRect();
+        return { y, height };
+      };
+      const main = document.querySelector("main");
+      const heading = main?.querySelector("h1");
+      const summary = main?.querySelector('[aria-labelledby="panorama-result-heading"]');
+      const map = main?.querySelector('[aria-label="Mapa territorial de referencia"], [aria-label="Ganadores por circuito"]');
+      return {
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        banner: geometry(Array.from(document.querySelectorAll("header")).find(element => !element.closest("main")) ?? null),
+        context: geometry(document.querySelector('[aria-label="Contexto electoral"]')),
+        pageHeader: geometry(heading?.closest("header") ?? heading?.parentElement ?? null),
+        map: geometry(map ?? null),
+        mapRegion: map?.getAttribute("aria-label") ?? null,
+        summary: geometry(summary ?? null),
+        summaryMessages: Array.from(summary?.querySelectorAll('[role="status"], [role="alert"]') ?? [])
+          .filter(element => element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible")
+          .map(element => ({ role: element.getAttribute("role"), text: (element as HTMLElement).innerText })),
+      };
+    });
+    await writeFile(testInfo.outputPath("e2e-facts-panorama-fold.json"), JSON.stringify(facts, null, 2));
+    throw error;
+  }
+  const limits = main.locator("details").filter({ has: page.locator("summary", { hasText: /^Fuente y límites$/ }) });
+  await expect(limits).not.toHaveAttribute("open", "");
+  await limits.locator("summary").click();
+  await expect(main.getByRole("heading", { name: "Límites y evidencia", exact: true })).toBeVisible();
+  await limits.locator("summary").click();
   await expectNoSevereAccessibilityIssues(page);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
