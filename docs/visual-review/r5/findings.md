@@ -2,6 +2,27 @@
 
 **Do not close #499, #500 or #501 on this evidence alone.** The full-page evidence is now available for all five pages, including Evidencia. Comparación's repeated per-map actions have been consolidated and Simulación's compact distribution is visibly improved. Nevertheless, mobile density, obstructed desktop captures, and a raw Evidencia exclusion code remain. Static images do not establish interaction assertions, strict TDD, or the required gate result.
 
+## Human sign-off (2026-10-16)
+
+Owner decisions (verbatim):
+
+1. #499 Comparación mobile height difference (6388 vs 4708 px at 390; 6905 vs 4891 at 320) accepted as intentional deviation — all text stays in the DOM;
+2. #500 R5 equal-width 1440 pairs accepted as replacement for the historical R4 reconstruction.
+
+These decisions supersede the historical requests for human sign-off on those two points below; they do not establish the remaining interaction, gate, or independent-verification criteria.
+
+The verifier reported these production document heights for main `1d1e8c6` (CSS px). This is a later baseline than the historical `7ceb0b0` inventory below, not a measurement from the capture fix.
+
+| Page | 1440 | 390 | 320 |
+|---|---:|---:|---:|
+| Panorama | 2736 | 3915 | 4383 |
+| Exploración | 3891 | 5776 | 6460 |
+| Comparación | 3371 | 6388 | 6905 |
+| Evidencia | 3253 | 5590 | 6014 |
+| Simulación | 3320 | 5681 | 6447 |
+
+The independent verifier found the desktop `pair-exploracion-1440.png` and `pair-comparacion-1440.png` obstructed by the sticky global context bar, with focus-ring/skip-link artifacts remaining. The R5 spec now normalizes sticky/fixed positioning and blurs the active element before each full-page production capture, without changing production components or other specs. Clean replacement images still require the CI-only e2e lane; that lane was not run locally.
+
 ## Evidence, method and history
 
 Reviewed the issue bodies using `gh issue view 499`, `gh issue view 500`, and `gh issue view 501`. Read the previous findings from the parent-prepared clean origin/main checkout. Parent reports fixes merged through PRs 571–573; merge status is context, not proof of visual acceptance.
