@@ -74,6 +74,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <PanoramaChildren key={territory} data={data} selectedCircuit={selectedCircuit} onClearSelection={() => { clearHighlight(); selectCircuit(null); }} onHoverCircuit={setHoveredCircuit} onFocusCircuit={setFocusedCircuit} />
     <details className={styles.evidence}>
       <summary id="official-evidence-heading">Fuente y límites</summary>
+      <h3>Límites y evidencia</h3>
       <p>Fiscalización es una fuente no oficial, de consulta separada; sus cifras no se combinan con las de este panorama.</p>
       <p>La geometría CNE es referencia geográfica, no cobertura electoral. Geometría no certificada como límite electoral 2025. Aplicabilidad electoral desconocida; no acredita equivalencia histórica.</p>
       <p>Fuente geográfica: CNE · recuperada el 24/09/2026. {mapped ? "0248B y 0248C se superponen en la fuente; su área compartida se muestra neutra y rayada." : "Contorno ancestro; sin geometría propia para unidades inferiores ni mapa de ganadores disponible para esta selección."}</p>

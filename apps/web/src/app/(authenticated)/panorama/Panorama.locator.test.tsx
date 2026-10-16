@@ -10,6 +10,13 @@ it("bounds the circuit overview drawing independently of its full evidence legen
   expect(drawing).toMatch(/display:\s*block/);
 });
 
+it("bounds the reference stage within Panorama without resizing Exploration", () => {
+  const css = readFileSync(new URL("./panorama.module.css", import.meta.url), "utf8");
+  const stage = css.match(/\.map > section\[data-map-kind="locator"\] > div\s*\{([^}]+)\}/)?.[1];
+  expect(stage).toMatch(/height:\s*160px/);
+  expect(stage).toMatch(/min-height:\s*0/);
+});
+
 it("lets the reference locator use its shared compact dimensions without inline stage overrides", () => {
   const html = renderToStaticMarkup(<Panorama data={{ href: "/drilldown", exclusions: [] }} />);
   expect(html).toContain('data-map-kind="locator"');

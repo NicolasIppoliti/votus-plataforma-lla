@@ -150,7 +150,8 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
     await page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true }).selectOption("02");
     await page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true }).selectOption("027");
     const summary = page.getByRole("complementary", { name: "Lectura de la selección" });
-    const total = summary.locator("dt", { hasText: "Votos positivos oficiales" }).locator("+ dd");
+    // #458 states the official denominator in the headline metric label.
+    const total = summary.getByText(/^Sobre [\d.]+ votos positivos oficiales$/);
     try {
       await expect(total).toBeVisible();
     } catch (error) {
@@ -172,7 +173,7 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
             regions: {
               context: !!bar,
               summary: !!summary,
-              officialTotal: !!summary && Array.from(summary.querySelectorAll("dt")).some(node => node.textContent === "Votos positivos oficiales"),
+              officialTotal: !!summary && Array.from(summary.querySelectorAll("span")).some(node => /^Sobre [\d.]+ votos positivos oficiales$/.test(node.textContent ?? "")),
               alertCount: alerts.filter(node => node.getAttribute("role") === "alert").length,
               statusCount: alerts.filter(node => node.getAttribute("role") === "status").length,
             },
@@ -185,19 +186,19 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
       } catch { /* Diagnostics must not replace the original failure. */ }
       throw error;
     }
-    await expect(total).toHaveText("11.111");
+    await expect(total).toHaveText("Sobre 11.111 votos positivos oficiales");
     await category.selectOption(categories[1]!);
     await expect(category).toHaveValue(categories[1]!);
     await expect(page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true })).toHaveValue("02");
     await expect(page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue("027");
     await expect(total).toBeVisible();
-    await expect(total).toHaveText("7.777");
+    await expect(total).toHaveText("Sobre 7.777 votos positivos oficiales");
     const exact = page.getByRole("link", { name: "Ver resultados exactos en Exploración" });
     await expect(exact).toHaveAttribute("href", new RegExp(`categoryId=${categories[1]}`));
     await expect(page.locator("#panorama-territory")).toHaveCount(0);
     await page.reload();
     await expect(total).toBeVisible();
-    await expect(total).toHaveText("7.777");
+    await expect(total).toHaveText("Sobre 7.777 votos positivos oficiales");
   }), test.info());
 });
 
