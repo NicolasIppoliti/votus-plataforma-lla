@@ -12,6 +12,7 @@ import { MAP_HEADING } from "../drilldown/map-heading";
 import type { PanoramaData } from "./load-panorama";
 import styles from "./panorama.module.css";
 import { formatCount, formatDecimal } from "@/lib/format/number";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 
 const name = (party: { identityStatus: string; displayName: string | null }) => party.identityStatus === "unmapped" ? "Agrupación sin correspondencia canónica" : party.displayName ?? "Agrupación sin nombre";
 
@@ -85,13 +86,13 @@ export function Panorama({ data }: { data: PanoramaData }) {
         <p>Nivel del informe: {granularityLabel(result.level)}. Granularidad real de la fuente: {granularityLabel(result.sourceGranularity)}.</p>
       </>}
       {(completeness?.status === "complete" || completeness?.status === "partial") && <p>No escrutadas: {completeness.counts.not_counted}; faltantes: {completeness.counts.missing}; inesperadas: {completeness.counts.unexpected}; en cuarentena: {completeness.counts.quarantined}; cuarentenas no atribuidas: {completeness.counts.unattributed_quarantined}.</p>}
-      {completeness?.status === "unknown" && <p>Completitud desconocida: {completeness.reason}. {completeness.reason === "section_absent_from_catalogue" && <>Mesas en la fuente: {completeness.unlisted_status_mesas}; cuarentenas: {completeness.quarantined_mesas}; no atribuidas: {completeness.unattributed_quarantined}.</>}</p>}
+      {completeness?.status === "unknown" && <p>Completitud desconocida: {facetExclusionLabel(completeness.reason)}. {completeness.reason === "section_absent_from_catalogue" && <>Mesas en la fuente: {completeness.unlisted_status_mesas}; cuarentenas: {completeness.quarantined_mesas}; no atribuidas: {completeness.unattributed_quarantined}.</>}</p>}
       {circuits?.status === "ok" && circuits.circuit_membership === "known" && <div className={styles.childQualifications}>
         <p>Sin membresía: {circuits.unassigned.catalogue_mesas_without_membership}; membresías en cuarentena: {circuits.unassigned.membership_quarantined_mesas}; cuarentenas de completitud: {circuits.unassigned.completeness_quarantines}; estados inesperados: {circuits.unassigned.unexpected_status_mesas}.</p>
-        {Object.entries(circuits.unassigned.membership_quarantine_reasons).map(([reason, count]) => <p key={`membership-${reason}`}>Cuarentena de membresía · {reason}: {count}.</p>)}
-        {Object.entries(circuits.unassigned.completeness_quarantine_reasons).map(([reason, count]) => <p key={`completeness-${reason}`}>Cuarentena de completitud · {reason}: {count}.</p>)}
+        {Object.entries(circuits.unassigned.membership_quarantine_reasons).map(([reason, count]) => <p key={`membership-${reason}`}>Cuarentena de membresía · {facetExclusionLabel(reason)}: {count}.</p>)}
+        {Object.entries(circuits.unassigned.completeness_quarantine_reasons).map(([reason, count]) => <p key={`completeness-${reason}`}>Cuarentena de completitud · {facetExclusionLabel(reason)}: {count}.</p>)}
       </div>}
-      {evidence?.status !== "authorization_denied" && data.exclusions.map(item => <p key={item.reason}>Opciones excluidas · {item.reason}: {formatCount(item.rows)} filas.</p>)}
+      {evidence?.status !== "authorization_denied" && data.exclusions.map(item => <p key={item.reason}>Opciones excluidas · {facetExclusionLabel(item.reason)}: {formatCount(item.rows)} filas.</p>)}
       {result?.sourceExclusions.map(item => <p key={item.kind}>Excluidas del resultado · fuente {item.kind}: {formatCount(item.rows)} filas / {formatCount(item.votes)} votos.</p>)}
       {ok && <><h3>Procedencia del resultado oficial</h3>{ok.provenance.items.map(item => <p key={item.archiveEntryId}>Archivo {item.archiveEntryId} · {item.capability} · {item.fetchedAt} · sha256 {item.sha256 ?? "no disponible"}</p>)}{ok.provenance.items.filter(item => item.status !== "ok" || !item.sha256).map(item => <p key={item.archiveEntryId}>Verificación de archivo no confirmada: {item.archiveEntryId} · estado {item.status} · {item.sha256 ? "hash suministrado" : "sin hash"}.</p>)}</>}
 

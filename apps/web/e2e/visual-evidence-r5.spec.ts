@@ -89,12 +89,12 @@ async function capture(page: Page, file: string): Promise<Measurement> {
   await expect(signal(page, "capture-loading-cleared", page.getByText(/Cargando contexto autorizado|Preparando contorno de referencia/))).toHaveCount(0);
   if (file.startsWith("production-")) {
     // Capture-only normalization: full-page stitching must not paint sticky
-    // context bars over content, or retain focus from the setup journey.
+    // context bars over content. Preserve fixed positioning: skip links rely
+    // on it to stay outside the viewport until focused.
     await page.evaluate(() => {
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       for (const element of document.querySelectorAll<HTMLElement>("*")) {
         const position = getComputedStyle(element).position;
-        if (position === "sticky" || position === "fixed") {
+        if (position === "sticky") {
           element.style.setProperty("position", "static", "important");
         }
       }
@@ -106,6 +106,12 @@ async function capture(page: Page, file: string): Promise<Measurement> {
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(size.scrollWidth, `${file}: horizontal overflow`).toBeLessThanOrEqual(size.width);
+  // Last action before capture, after all setup interactions and measurements.
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement) {
+      document.activeElement.blur();
+    }
+  });
   await page.screenshot({ path: test.info().outputPath(file), fullPage: true, animations: "disabled", scale: "css" });
   return { file, ...size };
 }
