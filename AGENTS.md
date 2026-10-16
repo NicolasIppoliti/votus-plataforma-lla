@@ -42,6 +42,10 @@ flow and gate table live in README.md, "Integration branch".
 - Pull requests into `develop` run only `web-static` and/or `etl-release`; the browser
   and SQL E2E lanes run on pushes to `develop` and on the `develop` → `main` pull
   request. Before asking for that release PR, the latest `develop` push must be green.
+- Merge the `develop` → `main` release PR (and any `main` → `develop` sync PR) with a
+  **merge commit** (`gh pr merge --merge`), never squash: squashing gives `main` a commit
+  `develop` never has, and every later release diverges. Feature PRs into `develop`
+  stay squash-merged.
 - When `develop` turns red, fixing it comes before merging anything else into it.
   Diagnose from the run's E2E diagnostics and `review-focus-geometry` artifacts; CI
   redacts values, so add failure-only `e2e-facts-*.json` facts instead of guessing.
