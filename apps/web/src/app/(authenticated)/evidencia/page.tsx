@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { sourceKindLabel } from "@/lib/results/source-kind-label";
 import { Alert, type AlertVariant } from "@/components/ui/alert";
 import { AVAILABILITY_COLORS, Legend } from "@/components/maps/reference-colors";
 import { normalizeExplorationParams, formatFacetOptionLabel, type ExplorationFacets } from "@/lib/results/exploration";
@@ -47,10 +48,10 @@ function completenessText(value: OfficialSectionCompleteness): string {
 function Exclusions({ evidence }: { evidence: EvidenceOk }) {
   return <section className={styles.exclusions} aria-labelledby="source-exclusions-heading"><h2 id="source-exclusions-heading">Fuentes y exclusiones</h2>
     <p>Solo fuente oficial. Los conteos de exclusión describen lo que quedó fuera; no se suman a los resultados oficiales.</p>
-    {evidence.result.sourceExclusions.length ? evidence.result.sourceExclusions.map(entry => <p role="note" key={entry.kind}>Fuente excluida {entry.kind === "fiscalizacion" ? "fiscalización" : entry.kind}: {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s) del agregado oficial.</p>) : <p>El agregado oficial no informa exclusiones de otras fuentes.</p>}
-    {evidence.reference.sourceExclusions.map(entry => <p role="note" key={`reference-${entry.kind}`}>Referencia: fuente excluida {entry.kind}; razón {facetExclusionLabel(entry.reason)}; {formatCount(entry.rows)} fila(s).</p>)}
-    {evidence.provenance.sourceExclusions.map(entry => <p role="note" key={`provenance-${entry.kind}`}>Procedencia: fuente excluida {entry.kind}; {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s).</p>)}
-    {evidence.schools.sourceExclusions.map(entry => <p role="note" key={`school-source-${entry.kind}`}>Establecimientos: fuente excluida {entry.kind}; {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s).</p>)}
+    {evidence.result.sourceExclusions.length ? evidence.result.sourceExclusions.map(entry => <p role="note" key={entry.kind}>Fuente excluida {sourceKindLabel(entry.kind)}: {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s) del agregado oficial.</p>) : <p>El agregado oficial no informa exclusiones de otras fuentes.</p>}
+    {evidence.reference.sourceExclusions.map(entry => <p role="note" key={`reference-${entry.kind}`}>Referencia: fuente excluida {sourceKindLabel(entry.kind)}; razón {facetExclusionLabel(entry.reason)}; {formatCount(entry.rows)} fila(s).</p>)}
+    {evidence.provenance.sourceExclusions.map(entry => <p role="note" key={`provenance-${entry.kind}`}>Procedencia: fuente excluida {sourceKindLabel(entry.kind)}; {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s).</p>)}
+    {evidence.schools.sourceExclusions.map(entry => <p role="note" key={`school-source-${entry.kind}`}>Establecimientos: fuente excluida {sourceKindLabel(entry.kind)}; {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s).</p>)}
     {evidence.schools.exclusions.map(entry => <p role="note" key={`school-${entry.reason}`}>Establecimientos: {facetExclusionLabel(entry.reason)}; {formatCount(entry.rows)} fila(s) / {formatCount(entry.votes)} voto(s).</p>)}
   </section>;
 }
@@ -158,7 +159,7 @@ export default async function EvidencePage({ searchParams }: { searchParams: Pro
           {part.reason && <p>{facetExclusionLabel(part.reason)}</p>}
           {part.counts && Object.entries(part.counts).map(([reason, count]) => <p role="note" key={reason}>{facetExclusionLabel(reason)}: {count}.</p>)}
           {part.exclusions?.map(entry => <p role="note" key={entry.reason}>Exclusión {entry.reason === undefined ? "motivo no informado" : facetExclusionLabel(entry.reason)}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}</p>)}
-          {part.sourceExclusions?.map(entry => <p role="note" key={entry.kind}>Fuente excluida {entry.kind}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}</p>)}
+          {part.sourceExclusions?.map(entry => <p role="note" key={entry.kind}>Fuente excluida {sourceKindLabel(entry.kind ?? "unknown")}: {formatCount(entry.rows)} fila(s){entry.votes === undefined ? "." : ` / ${formatCount(entry.votes)} voto(s).`}</p>)}
         </section>)}
       </Refusal>;
     }
