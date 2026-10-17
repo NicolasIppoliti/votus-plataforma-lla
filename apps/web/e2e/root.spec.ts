@@ -13,6 +13,56 @@ import { prepareOrganization } from "./onboarding";
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
 
+async function expectAccountPointerAccess(page: Page, width: number) {
+  const mobile = width <= 980;
+  if (mobile) await page.getByRole("button", { name: "Abrir navegación" }).click();
+  const container = mobile
+    ? page.getByRole("dialog", { name: "Navegación principal" })
+    : page.locator(".workspace-topbar__controls");
+  await container.locator("summary", { hasText: /^Cuenta$/ }).click();
+  // The drawer is deliberately scrollable; reveal the expanded account before
+  // checking all items together, without scrolling individual items into place.
+  if (mobile) await container.locator(".workspace-account").scrollIntoViewIfNeeded();
+  const items = [
+    container.getByRole("link", { name: "Guía de Votus", exact: true }),
+    container.getByRole("link", { name: "Privacidad", exact: true }),
+    container.getByRole("button", { name: "Cerrar sesión", exact: true }),
+  ];
+  const boxes = [];
+  for (const item of items) {
+    await expect(item).toBeVisible();
+    await expect(item).toBeInViewport({ ratio: 1 });
+    const box = await item.boundingBox();
+    expect(box).not.toBeNull();
+    boxes.push(box!);
+    expect(await item.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return hit !== null && element.contains(hit);
+    })).toBe(true);
+  }
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i]!;
+      const b = boxes[j]!;
+      expect(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y).toBe(true);
+    }
+  }
+  if (!mobile) expect((await page.locator(".workspace-topbar").boundingBox())!.height).toBe(64);
+  await items[1]!.click();
+  await expect(page).toHaveURL(url => url.pathname === "/privacidad");
+}
+
+for (const width of [1440, 981, 390]) {
+  test(`Cuenta items are inside the viewport, nonoverlapping and pointer reachable at ${width}px`, async ({ page }) => {
+    await withReviewItem(page, async () => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/");
+      await expectAccountPointerAccess(page, width);
+    });
+  });
+}
+
 test("document titles distinguish direct entries, redirects and client navigation (#595)", async ({ page }) => {
   await withReviewItem(page, async () => {
     for (const [route, title] of [["/", "Panorama"], ["/drilldown", "Exploración"], ["/compare", "Comparación"], ["/dashboard", "Panorama"]] as const) {
@@ -432,6 +482,13 @@ test("real workspace A to B replaces identity and authorized count, while B to A
         await expect(reader).not.toContainText("No se pudo verificar");
       }
       await expect(sidebar.locator(".workspace-identity")).not.toContainText("E2E Authorized Review Browser");
+      for (const width of [1440, 981, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto("/");
+        await expect(page.getByRole("banner")).toContainText("Sin elementos pendientes");
+        await expectAccountPointerAccess(page, width);
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.goto("/simulate");
       const draft = page.getByLabel("Total de votos", { exact: true });
