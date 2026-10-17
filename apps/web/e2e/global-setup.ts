@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { chromium } from "@playwright/test";
+import { chromium, expect, type FullConfig } from "@playwright/test";
 
 import { findUserByEmail } from "../src/lib/e2e-fixture-user";
 import {
@@ -22,7 +22,7 @@ import {
  * The release gate owns all credentials. Missing input is a hard failure,
  * never a reason to turn a required scenario into a skip.
  */
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(config: FullConfig): Promise<void> {
   const environment = assertE2eEnvironment(process.env);
   const url = environment.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = environment.SUPABASE_SERVICE_ROLE_KEY;
@@ -57,7 +57,8 @@ export default async function globalSetup(): Promise<void> {
     throw new Error(`e2e global setup: failed to seed fixture user ${email}: ${createError.message}`);
   }
 
-  const browser = await chromium.launch();
+  const channel = config.projects[0]?.use.channel;
+  const browser = await chromium.launch(channel ? { channel } : {});
   try {
     const context = await browser.newContext({ baseURL: environment.VOTUS_E2E_BASE_URL });
     const page = await context.newPage();
@@ -67,11 +68,12 @@ export default async function globalSetup(): Promise<void> {
     await page.getByLabel("Contraseña").fill(password);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
     try {
-      await page.waitForURL((url) => url.pathname === "/", { timeout: 10_000 });
+      await page.waitForURL((url) => url.pathname === "/onboarding", { timeout: 10_000 });
     } catch {
       const alert = await page.getByRole("alert").textContent().catch(() => null);
       throw new Error(`e2e global setup: fixture sign-in failed${alert ? `: ${alert}` : ""}`);
     }
+    await expect(page.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\. Pedile acceso a quien administra tu organización\.$/ })).toBeVisible();
     assertLoopbackSessionCookieDelta(
       cookiesBeforeLogin,
       await context.cookies(),

@@ -651,15 +651,19 @@ test.describe("authorized official comparison", () => {
       await openChart(); await expect(chart).toBeVisible();
       await revokeAuthorization();
       await page.reload();
-      await expect(page).toHaveURL(servedUrl.toString());
-      // Revoking entitlements increments the organization revision: the workspace
-      // becomes stale, so #427's preflight replaces data with inline reselection.
-      const recovery = main.getByRole("region", { name: "Selección de organización", exact: true });
+      await expect(page).toHaveURL(url => url.pathname === "/onboarding" && url.searchParams.get("returnTo") === servedUrl.pathname + servedUrl.search);
+      // Revoking entitlements increments the organization revision. The stale
+      // workspace now requires reselection in onboarding, never comparison data.
+      const recovery = main.getByRole("region", { name: "Elegí tu organización", exact: true });
       await expect(recovery).toBeVisible();
-      await expect(main.getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
-      await expect(recovery.getByRole("status").filter({ hasText: /^Tu acceso a la organización activa cambió\./ })).toBeVisible();
+      const workspace = await page.request.get("/api/workspace");
+      expect(workspace.ok()).toBe(true);
+      const workspaceState = await workspace.json();
+      await writeFile(test.info().outputPath("e2e-facts-comparison-revoked.json"), JSON.stringify({ status: workspaceState.status, onboardingCompleted: workspaceState.onboardingCompleted }));
+      expect(workspaceState).toMatchObject({ status: "stale", activeOrganizationId: null });
+      expect(workspaceState.onboardingCompleted).not.toBe(true);
       await expect(recovery.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
-      await expect(recovery.getByRole("button", { name: "Cambiar organización", exact: true })).toBeVisible();
+      await expect(recovery.getByRole("button", { name: "Continuar con esta organización", exact: true })).toBeVisible();
       await expect(chart).toHaveCount(0); await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");
     }));

@@ -143,7 +143,7 @@
 .children p { color: var(--secondary-ink); font-size: 13px; }
 .childControls { display: flex; gap: 12px; }
 .childControls > div { width: 200px; min-width: 0; }
-.childControls input { width: 100%; min-height: 44px; padding: 9px 12px; background: var(--map-stage); border: 1px solid var(--border); border-radius: 5px; color: var(--ink); }
+.childControls input { width: 100%; min-height: 44px; padding: 9px 12px; background: var(--map-stage); border: 1px solid var(--control-border); border-radius: 5px; color: var(--ink); }
 .mapUnavailable { min-height: 440px; padding: 24px; background-image: linear-gradient(#28425540 1px, transparent 1px), linear-gradient(90deg, #28425540 1px, transparent 1px); background-size: 24px 24px; }
 .mapUnavailable h2 { font-size: 17px; }
 .mapUnavailable p { font-size: 13px; color: var(--secondary-ink); }

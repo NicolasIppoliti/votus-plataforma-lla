@@ -1,5 +1,6 @@
+import { prepareOrganization } from "./onboarding";
 import { createClient } from "@supabase/supabase-js";
-import { expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import { assertE2eEnvironment } from "./gate-contract";
 
 /** Same scoped authorization RPC and real workspace switch as the official,
@@ -17,17 +18,7 @@ export async function withAuthorizedResultWorkspace<T>(page: Page, baseURL: stri
   if (error || typeof fixture?.organization_id !== "string") throw new Error("failed to authorize visual result fixture");
   let outcome: { value: T } | { error: unknown };
   try {
-    await page.goto(new URL("/dashboard", baseURL).toString());
-    const trigger = page.getByRole("button", { name: "Abrir navegación" });
-    const mobile = await trigger.isVisible();
-    if (mobile) await trigger.click();
-    const workspaceControls = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
-    await workspaceControls.getByRole("combobox", { name: "Organización", exact: true }).selectOption(fixture.organization_id);
-    const switched = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await workspaceControls.getByRole("button", { name: "Cambiar organización" }).click();
-    const response = await switched;
-    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
-    if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+    await prepareOrganization(page, fixture.organization_id, new URL("/", baseURL).toString());
     outcome = { value: await run() };
   } catch (error) { outcome = { error }; }
   let cleanupError: Error | null = null;

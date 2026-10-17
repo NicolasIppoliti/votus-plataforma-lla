@@ -60,7 +60,7 @@
 .children p { color: #b9c8d2; font-size: 13px; }
 .lookup { display: flex; align-items: end; gap: 20px; margin: 14px 0 17px; }
 .lookup label { display: block; width: 300px; color: #b9c8d2; font-size: 13px; }
-.lookup input { display: block; margin-top: 5px; width: 100%; min-height: 44px; padding: 10px 12px; background: #0d2130; border: 1px solid #355367; border-radius: 5px; color: #edf5f7; font: inherit; }
+.lookup input { display: block; margin-top: 5px; width: 100%; min-height: 44px; padding: 10px 12px; background: #0d2130; border: 1px solid var(--control-border); border-radius: 5px; color: #edf5f7; font: inherit; }
 .childTable { max-width: 100%; overflow: auto; border-block: 1px solid #284255; }
 .childTable table { width: 100%; min-width: 650px; border-collapse: collapse; text-align: left; font-size: 14px; }
 .childTable caption { text-align: left; color: #b9c8d2; padding: 10px 14px; }

@@ -1,4 +1,4 @@
-import { selectOrganizationInlineOnReview } from "./workspace-selection";
+import { selectOrganizationOnboardingOnReview } from "./workspace-selection";
 import { REVIEW_ITEM, withReviewItem } from "./authorized-review-fixture";
 import { writeFile } from "node:fs/promises";
 import { test as browserTest, type Locator, type Page } from "@playwright/test";
@@ -12,7 +12,7 @@ import { zoomTest } from "./review-zoom-test-fixture";
 import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focus-geometry";
 import { createReviewScrollObserver, withReviewScrollDiagnostics, type ReviewScrollPhase } from "./review-scroll-completion";
 
-browserTest("selecting an organization inline on review refreshes the real page with authorized data", selectOrganizationInlineOnReview);
+browserTest("a review visit without an organization completes onboarding selection and returns to review with authorized data", selectOrganizationOnboardingOnReview);
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -380,6 +380,7 @@ for (const windowWidth of [1280, 640]) {
         await expectControlSize(submit);
         await tabTo(page, account);
         await page.keyboard.press("Enter");
+        await tabTo(page, drawer.getByRole("link", { name: "Guía de Votus", exact: true }));
         await tabTo(page, drawer.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
         await page.keyboard.press("Escape");
         await expectKeyboardFocus(account);
@@ -543,6 +544,7 @@ test.describe("the review route reflects the disposable database", () => {
         const account = page.getByRole("group", { name: "Organización y cuenta", exact: true }).locator("summary");
         await tabTo(page, account);
         await page.keyboard.press("Enter");
+        await tabTo(page, workspaceControls.getByRole("link", { name: "Guía de Votus", exact: true }));
         await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
         await page.keyboard.press("Escape");
         await expectKeyboardFocus(account);
@@ -846,14 +848,15 @@ test.describe("the review route reflects the disposable database", () => {
       .getByRole("link", { name: "Revisión de datos", exact: true });
     await expect(reviewLink).toHaveAttribute("href", "/review");
     await reviewLink.click();
-    await expect(page).toHaveURL(/\/review$/);
+    // A client-side revisit can reuse the previously authorized RSC document;
+    // a full navigation checks the now-cleaned fixture's current authorization.
     await page.reload();
+    await expect(page).toHaveURL(url => url.pathname === "/onboarding" && url.searchParams.get("returnTo") === "/review");
     const main = page.getByRole("main");
-    await expect(main.getByRole("heading", { level: 1, name: "Cola de revisión", exact: true })).toBeVisible();
-    await expect(main.getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
-    const selection = main.getByRole("region", { name: "Selección de organización", exact: true });
+    await expect(main.getByRole("heading", { name: "Cola de revisión", exact: true })).toHaveCount(0);
+    const selection = main.getByRole("region", { name: "Elegí tu organización", exact: true });
     await expect(selection).toBeVisible();
-    await expect(selection.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+    await expect(selection.getByRole("status")).toHaveText("No hay organizaciones disponibles. Pedile acceso a quien administra tu organización.");
     await expect(selection.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(0);
     await expect(main.getByRole("alert")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);

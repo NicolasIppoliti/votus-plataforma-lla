@@ -27,6 +27,11 @@ grant select (id)
 on table public.review_item
 to service_role;
 
+-- Disposable browser-stack cleanup only; production clients retain no direct access.
+grant delete on workspace_private.onboarding_completion to workspace_audit_owner;
+create policy e2e_workspace_audit_onboarding_delete on workspace_private.onboarding_completion
+  for delete to workspace_audit_owner using (true);
+
 grant workspace_admin_owner to current_user;
 grant workspace_context_owner,workspace_review_ingest_owner to workspace_admin_owner with inherit true,set false;
 set role workspace_admin_owner;
@@ -124,6 +129,8 @@ begin
   for update of organization, membership, entitlement, review_scope, review_item;
   if not found then raise exception 'e2e authorized review fixture cleanup facts are missing or collide'; end if;
 
+  delete from workspace_private.onboarding_completion
+  where organization_id = fixture_organization_id and user_id = fixture_user_id;
   delete from workspace_private.workspace_context where organization_id = fixture_organization_id;
   delete from workspace_private.workspace_audit_event where organization_id = fixture_organization_id;
   delete from workspace_private.review_item_section_scope where review_item_id = fixture_review_item_id;
@@ -251,6 +258,8 @@ begin
         and (entitlement.distrito_code, entitlement.seccion_code) <> (fixture_distrito_code, fixture_seccion_code)
         and (not fixture_has_extra or (entitlement.distrito_code, entitlement.seccion_code) <> (fixture_extra_distrito_code, fixture_extra_seccion_code)))
   then raise exception 'e2e authorized fiscal fixture cleanup facts are missing or collide'; end if;
+  delete from workspace_private.onboarding_completion
+  where organization_id = fixture_organization_id and user_id = fixture_user_id;
   delete from workspace_private.workspace_context where organization_id = fixture_organization_id;
   delete from workspace_private.workspace_audit_event where organization_id = fixture_organization_id;
   delete from workspace_private.organization_section_entitlement where organization_id = fixture_organization_id;

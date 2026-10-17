@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { writeFile } from "node:fs/promises";
 import { formatCount } from "../src/lib/format/number";
-import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test } from "./onboarded-test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 import { expectMobileFormGeometry } from "./mobile-form-geometry";
 
@@ -761,9 +762,25 @@ test.describe("simulation operation focus (#601)", () => {
       await page.keyboard.press("Tab");
       const submit = form.getByRole("button", { name: isTransfer ? "Transferir votos" : "Evaluar muestras", exact: true });
       await expect(submit).toBeFocused();
+      // Polling only after the alert misses a transient disabled state: Chrome
+      // may blur the submit before React finishes this synchronous validation.
+      await submit.evaluate((button) => {
+        button.setAttribute("data-focus-losses", "0");
+        const record = () => button.setAttribute("data-focus-losses",
+          String(Number(button.getAttribute("data-focus-losses")) + 1));
+        button.addEventListener("blur", record, { once: true });
+        const observer = new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            // oldValue also catches disabled being removed in the same turn.
+            if (mutation.oldValue !== null || button.hasAttribute("disabled")) record();
+          }
+        });
+        observer.observe(button, { attributes: true, attributeFilter: ["disabled"], attributeOldValue: true });
+      });
       const previousUrl = page.url();
       await page.keyboard.press("Enter");
       await expect(form.getByRole("alert")).toContainText("no puede superar");
+      await expect(submit, "submit must remain focusable throughout validation").toHaveAttribute("data-focus-losses", "0");
       await expect(submit).toBeFocused();
       const announcement = form.locator(isTransfer ? "#transfer-errors" : "#sweep-errors");
       await expect(announcement).toHaveAttribute("aria-live", "polite");

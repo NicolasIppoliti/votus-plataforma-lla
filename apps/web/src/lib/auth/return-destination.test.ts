@@ -40,3 +40,10 @@ it.each(["/", "/dashboard", "/drilldown?electionId=2025&distritoCode=02&seccionC
   expect(login.pathname).toBe("/login");
   if (destination !== "/") expect(login.searchParams.get("returnTo")).toBe(destination);
 });
+
+
+it("preserves onboarding and its safe nested return destination through login", () => {
+  const destination = "/onboarding?paso=guia&returnTo=%2Fcompare%3FelectionId%3D2025";
+  expect(returnDestination(destination)).toBe(destination);
+  expect(new URL(loginDestination(destination), "https://votus.test").searchParams.get("returnTo")).toBe(destination);
+});

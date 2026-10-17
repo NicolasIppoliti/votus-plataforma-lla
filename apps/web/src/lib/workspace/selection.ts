@@ -10,6 +10,7 @@ export interface WorkspaceOption { id: string; name: string; }
 export interface WorkspaceSelection {
   status: WorkspaceSelectionStatus; revision: number | null; activeOrganizationId: string | null;
   organizations: WorkspaceOption[]; total: number | null; truncated: boolean | null;
+  onboardingCompleted?: boolean;
 }
 interface AvailableOrganizations { organizations: WorkspaceOption[]; total: number; truncated: boolean; }
 
@@ -57,8 +58,12 @@ export async function loadWorkspaceSelection(): Promise<WorkspaceSelection> {
     const active = option(current["organization"]);
     if (!active) return unavailable();
     const returned = available.organizations.find((organization) => organization.id === active.id);
-    if (returned) return returned.name === active.name ? projection(WORKSPACE_SELECTION_STATUS.ACTIVE, contextRevision, available, active.id) : unavailable();
-    return available.truncated ? projection(WORKSPACE_SELECTION_STATUS.ACTIVE, contextRevision, available, active.id, [...available.organizations, active]) : unavailable();
+    if (returned) return returned.name === active.name
+      ? { ...projection(WORKSPACE_SELECTION_STATUS.ACTIVE, contextRevision, available, active.id), onboardingCompleted: current["onboarding_completed"] === true }
+      : unavailable();
+    return available.truncated
+      ? { ...projection(WORKSPACE_SELECTION_STATUS.ACTIVE, contextRevision, available, active.id, [...available.organizations, active]), onboardingCompleted: current["onboarding_completed"] === true }
+      : unavailable();
   } catch (error) { return mismatch(error) ?? unavailable(); }
 }
 

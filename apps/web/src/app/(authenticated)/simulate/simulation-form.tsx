@@ -147,6 +147,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
   if (!baseline) return null;
   return (
     <form aria-label="Transferencia de votos a total fijo" action={action}
+      onSubmit={(event) => { if (pending) event.preventDefault(); }}
       className="simulation-transfer simulation-form__section panel form-grid" noValidate aria-busy={pending}>
       <h3 className="sr-only">Transferir votos entre listas</h3>
       {[{ name: "donor", label: "Lista donante" }, { name: "target", label: "Lista receptora" }].map(({ name, label }) => (
@@ -171,7 +172,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
       <div id="transfer-errors" aria-live="polite" aria-atomic="true">
         {errors.length ? <Alert variant="denied"><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></Alert> : null}
       </div>
-      <Button id="transfer-submit" type="submit" disabled={pending}>Transferir votos</Button>
+      <Button id="transfer-submit" type="submit" aria-disabled={pending}>Transferir votos</Button>
       <details className="simulation-help"><summary>Cómo funciona la transferencia</summary><p id="transfer-help">Operación hipotética a total fijo: resta votos de una lista y suma
         la misma cantidad a otra, sin cambiar los demás datos del escenario actual.
         Cero conserva exactamente el escenario. Al cambiar la base, seleccione las listas de nuevo.</p></details>
@@ -201,6 +202,7 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
   if (!baseline) return null;
   return (
     <form aria-label="Muestreo de transferencias a total fijo" action={action} noValidate
+      onSubmit={(event) => { if (pending) event.preventDefault(); }}
       aria-busy={pending} className="simulation-transfer simulation-form__section panel form-grid">
       <h3>Muestrear transferencias sin cambiar la base</h3>
       <p id="sweep-help">Operación hipotética a total fijo. Incluye cero y el máximo; si el paso no divide
@@ -229,7 +231,7 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
       <div id="sweep-errors" aria-live="polite" aria-atomic="true">
         {errors.length ? <Alert variant="denied"><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></Alert> : null}
       </div>
-      <Button id="sweep-submit" type="submit" disabled={pending}>Evaluar muestras</Button>
+      <Button id="sweep-submit" type="submit" aria-disabled={pending}>Evaluar muestras</Button>
     </form>
   );
 }
