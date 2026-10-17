@@ -129,14 +129,14 @@ const integrationPatterns = [
 	["etl-only", '["etl-release"]', "skipped", "success", "skipped", "skipped"],
 	["web-and-e2e", '["web-static"]', "success", "skipped", "skipped", "skipped"],
 ] as const;
-function verify(gates: string, results: string[], baseRef = "") {
+function verify(gates: string, results: string[], baseRef = "", crossBrowserEvent = "false", crossBrowserResult = "skipped") {
 	return spawnSync("bash", ["-euc", shellFor("Require all release gates")], {
 		encoding: "utf8",
 		env: {
 			NODE_ENV: "test", PATH: process.env.PATH, SCOPE_GATES: gates, BASE_REF: baseRef,
 			SCOPE_RESULT: results[0], WEB_STATIC_RESULT: results[1],
 			ETL_RELEASE_RESULT: results[2], E2E_RELEASE_RESULT: results[3],
-			E2E_SQL_RESULT: results[4],
+			E2E_SQL_RESULT: results[4], CROSS_BROWSER_EVENT: crossBrowserEvent, E2E_CROSS_BROWSER_RESULT: crossBrowserResult,
 		},
 	});
 }
@@ -163,6 +163,15 @@ function publish(input: string, supabase: unknown = "2.116.0", python = "3.13.12
 	}
 }
 describe("workflow scope boundaries", () => {
+	it("requires cross-browser success on selected release events and an exact skip elsewhere", () => {
+		const gates = JSON.stringify(ALL_GATES);
+		const results = ["success", "success", "success", "success", "success"];
+		expect(verify(gates, results, "main", "true", "success").status).toBe(0);
+		for (const result of ["", "failure", "cancelled", "skipped", "unknown"]) {
+			expect(verify(gates, results, "main", "true", result).status).not.toBe(0);
+		}
+		expect(verify(gates, results, "", "false", "success").status).not.toBe(0);
+	});
 	it.each(integrationPatterns)("publishes %s without browser gates for pull requests into develop", (decision, gates) => {
 		const full = patterns.find(([name]) => name === decision)![1];
 		const result = publish(JSON.stringify({ schemaVersion: 1, decision, gates: JSON.parse(full) }), "2.116.0", "3.13.12\n", "develop");

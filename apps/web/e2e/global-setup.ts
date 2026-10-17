@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { chromium, expect, type FullConfig } from "@playwright/test";
+import { chromium, firefox, webkit, expect, type FullConfig } from "@playwright/test";
 
 import { findUserByEmail } from "../src/lib/e2e-fixture-user";
 import {
@@ -57,8 +57,10 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
     throw new Error(`e2e global setup: failed to seed fixture user ${email}: ${createError.message}`);
   }
 
-  const channel = config.projects[0]?.use.channel;
-  const browser = await chromium.launch(channel ? { channel } : {});
+  const project = config.projects[0];
+  const channel = project?.use.channel;
+  const engine = project?.use.browserName === "firefox" ? firefox : project?.use.browserName === "webkit" ? webkit : chromium;
+  const browser = await engine.launch(channel ? { channel } : {});
   try {
     const context = await browser.newContext({ baseURL: environment.VOTUS_E2E_BASE_URL });
     const page = await context.newPage();

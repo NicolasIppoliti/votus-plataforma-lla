@@ -251,6 +251,45 @@ jobs:
           if-no-files-found: error
           include-hidden-files: false
 
+  e2e-cross-browser:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'e2e-release') && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.base_ref == 'main')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          package_json_file: apps/web/package.json
+      # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      # v2.1.1
+      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf
+        with:
+          version: ${{ needs.scope.outputs.supabase }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/web
+      - run: pnpm exec playwright install --with-deps firefox webkit
+        working-directory: apps/web
+      - run: pnpm test:e2e:gate --lane cross-browser
+        working-directory: apps/web
+      # v7.0.1 — bounded counts only, including both engine outcomes
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ !cancelled() }}
+        with:
+          name: cross-browser-counts
+          path: apps/web/test-results/e2e-facts-cross-browser.json
+          retention-days: 14
+          if-no-files-found: warn
+
   e2e-sql:
     needs: scope
     if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'e2e-release') }}
@@ -288,6 +327,7 @@ jobs:
       - etl-release
       - e2e-release
       - e2e-sql
+      - e2e-cross-browser
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -298,6 +338,8 @@ jobs:
       ETL_RELEASE_RESULT: ${{ needs.etl-release.result }}
       E2E_RELEASE_RESULT: ${{ needs.e2e-release.result }}
       E2E_SQL_RESULT: ${{ needs.e2e-sql.result }}
+      E2E_CROSS_BROWSER_RESULT: ${{ needs.e2e-cross-browser.result }}
+      CROSS_BROWSER_EVENT: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.base_ref == 'main') }}
       BASE_REF: ${{ github.base_ref }}
     steps:
       - name: Require all release gates
@@ -329,3 +371,8 @@ jobs:
           test "$ETL_RELEASE_RESULT" = "$etl"
           test "$E2E_RELEASE_RESULT" = "$e2e"
           test "$E2E_SQL_RESULT" = "$e2e"
+          cross_browser=skipped
+          if [ "$CROSS_BROWSER_EVENT" = "true" ] && [ "$e2e" = "success" ]; then
+            cross_browser=success
+          fi
+          test "$E2E_CROSS_BROWSER_RESULT" = "$cross_browser"

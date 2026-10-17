@@ -147,7 +147,7 @@ test.describe("no anonymous read path", () => {
     });
     } finally { await fixtureContext.close(); }
   });
-  test("an already-open protected page returns to login when its session disappears", async ({ page, context }) => {
+  test("an already-open protected page returns to login when its session disappears", { tag: "@cross-browser" }, async ({ page, context }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.clock.install();
     await page.goto("/login");

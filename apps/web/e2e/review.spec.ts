@@ -12,7 +12,7 @@ import { zoomTest } from "./review-zoom-test-fixture";
 import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focus-geometry";
 import { createReviewScrollObserver, withReviewScrollDiagnostics, type ReviewScrollPhase } from "./review-scroll-completion";
 
-browserTest("a review visit without an organization completes onboarding selection and returns to review with authorized data", selectOrganizationOnboardingOnReview);
+browserTest("a review visit without an organization completes onboarding selection and returns to review with authorized data", { tag: "@cross-browser" }, selectOrganizationOnboardingOnReview);
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -318,7 +318,7 @@ zoomTest("test_authorized_review_uses_native_200_percent_zoom", async ({ page, n
 });
 
 for (const windowWidth of [1280, 640]) {
-  zoomTest.describe(`native 200% review at fixed ${windowWidth}px window`, () => {
+  zoomTest.describe(`native 200% review at fixed ${windowWidth}px window`, { tag: "@chromium-only" }, () => {
     zoomTest.use({ zoomWindowWidth: windowWidth });
     zoomTest("review remains keyboard usable with local table overflow and real paging", async ({ page, next, zoom }) => {
       const offsets: number[] = [];

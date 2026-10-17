@@ -13,12 +13,12 @@ WORKFLOW_RELATIVE_PATH = Path(".github/workflows/release-gates.yml")
 WORKFLOW_PATH = REPOSITORY_ROOT / WORKFLOW_RELATIVE_PATH
 FULL_COMMIT_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 APPROVED_NODE24_ACTION_REFS = {
-    "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", 5),
-    "actions/setup-node": ("a0853c24544627f65ddf259abe73b1d18a591444", 4),
-    "pnpm/action-setup": ("fc06bc1257f339d1d5d8b3a19a8cae5388b55320", 3),
+    "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", 6),
+    "actions/setup-node": ("a0853c24544627f65ddf259abe73b1d18a591444", 5),
+    "pnpm/action-setup": ("fc06bc1257f339d1d5d8b3a19a8cae5388b55320", 4),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", 1),
-    "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 3),
-    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 3),
+    "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 4),
+    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 4),
 }
 _LINE = object()
 
@@ -90,7 +90,14 @@ def test_review_diagnostic_upload_is_failure_only_and_narrowly_scoped() -> None:
     _assert_independent_release_jobs(workflow["jobs"])
     assert workflow["jobs"]["verify"]["if"] == "${{ always() }}"
     aggregate = workflow["jobs"]["verify"]
-    assert aggregate["needs"] == ["scope", "web-static", "etl-release", "e2e-release", "e2e-sql"]
+    assert aggregate["needs"] == [
+        "scope",
+        "web-static",
+        "etl-release",
+        "e2e-release",
+        "e2e-sql",
+        "e2e-cross-browser",
+    ]
     for name in aggregate["needs"]:
         variable = name.upper().replace("-", "_") + "_RESULT"
         assert aggregate["env"][variable] == f"${{{{ needs.{name}.result }}}}"
@@ -132,6 +139,11 @@ test "$WEB_STATIC_RESULT" = "$web"
 test "$ETL_RELEASE_RESULT" = "$etl"
 test "$E2E_RELEASE_RESULT" = "$e2e"
 test "$E2E_SQL_RESULT" = "$e2e"
+cross_browser=skipped
+if [ "$CROSS_BROWSER_EVENT" = "true" ] && [ "$e2e" = "success" ]; then
+  cross_browser=success
+fi
+test "$E2E_CROSS_BROWSER_RESULT" = "$cross_browser"
 """
     )
     uploads = [
@@ -140,7 +152,19 @@ test "$E2E_SQL_RESULT" = "$e2e"
         for index, step in enumerate(job["steps"])
         if step.get("uses", "").startswith("actions/upload-artifact@")
     ]
-    assert len(uploads) == 3
+    assert len(uploads) == 4
+    cross_browser_job, _, cross_browser = uploads[3]
+    assert cross_browser_job == "e2e-cross-browser"
+    assert cross_browser["uses"] == (
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    )
+    assert cross_browser["if"] == "${{ !cancelled() }}"
+    assert cross_browser["with"] == {
+        "name": "cross-browser-counts",
+        "path": "apps/web/test-results/e2e-facts-cross-browser.json",
+        "retention-days": 14,
+        "if-no-files-found": "warn",
+    }
     visual_job, _, visual = uploads[2]
     assert visual_job == "e2e-release"
     assert visual["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
@@ -308,6 +332,7 @@ def test_supabase_cli_versions_are_pinned_to_their_exact_release_jobs() -> None:
     assert setups == [
         ("etl-release", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
         ("e2e-release", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
+        ("e2e-cross-browser", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
         ("e2e-sql", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
     ]
 
