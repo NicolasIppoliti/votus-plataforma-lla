@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { writeFile } from "node:fs/promises";
 import { formatCount } from "../src/lib/format/number";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
@@ -651,6 +652,128 @@ test.describe("the simulation route labels caller-supplied projections", () => {
   });
 });
 
+
+test.describe("simulation operation focus (#601)", () => {
+  test.beforeAll(async ({ browser }, testInfo) => {
+    const factsPath = testInfo.outputPath("e2e-facts-simulation-browser.json");
+    await writeFile(factsPath, JSON.stringify({ version: browser.version() }));
+    await testInfo.attach("simulation-browser-version", {
+      path: factsPath,
+      contentType: "application/json",
+    });
+  });
+
+  const input = {
+    level: "pba_municipal", totalVotes: 10000, blankVotes: 0, annulledVotes: 0,
+    unmodeledVotes: 0, unmodeledVoteBreakdown: [], seatsToFill: 9,
+    isProjection: true, granularity: "seccion",
+    lists: [{ listId: "A", listName: "Lista A", votes: 6000 }, { listId: "B", listName: "Lista B", votes: 4000 }],
+  };
+
+  for (const operation of ["transfer", "sensitivity", "reset"] as const) {
+    test(`keyboard ${operation} preserves controls while pending and focuses a stable target after completion`, async ({ page }) => {
+      await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+      const transfer = page.getByRole("form", { name: "Transferencia de votos a total fijo", exact: true });
+      const transferButton = transfer.getByRole("button", { name: "Transferir votos", exact: true });
+      if (operation === "reset") {
+        // Arrange a served comparison before testing the reset operation itself.
+        await transfer.getByLabel("Lista donante").selectOption("A");
+        await transfer.getByLabel("Lista receptora").selectOption("B");
+        await transfer.getByLabel("Cantidad a transferir").fill("1000");
+        await transferButton.click();
+        await expect(page.getByRole("region", { name: "Comparación exacta de base y escenario", exact: true })).toBeVisible();
+        await page.reload();
+      }
+      await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
+      const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo", exact: true });
+      const sweepButton = sweep.getByRole("button", { name: "Evaluar muestras", exact: true });
+      const reset = page.getByRole("link", { name: "Restablecer base", exact: true });
+      if (operation === "transfer") {
+        await transfer.getByLabel("Lista donante").selectOption("A");
+        await transfer.getByLabel("Lista receptora").selectOption("B");
+        await transfer.getByLabel("Cantidad a transferir").fill("1000");
+        await page.keyboard.press("Tab");
+        await expect(transferButton).toBeFocused();
+      } else if (operation === "sensitivity") {
+        await sweep.getByLabel("Donante del muestreo").selectOption("A");
+        await sweep.getByLabel("Receptora del muestreo").selectOption("B");
+        await sweep.getByLabel("Máximo a transferir").fill("1000");
+        await sweep.getByLabel("Paso del muestreo").fill("500");
+        await page.keyboard.press("Tab");
+        await expect(sweepButton).toBeFocused();
+      } else {
+        // Tab from the transfer submit through its help disclosure to reset.
+        await transfer.getByLabel("Cantidad a transferir").focus();
+        await page.keyboard.press("Tab");
+        await page.keyboard.press("Tab");
+        await page.keyboard.press("Tab");
+        await expect(reset).toBeFocused();
+      }
+
+      // Hold the real RSC navigation so pending visibility is deterministic,
+      // rather than hoping to observe a fast local server between renders.
+      let navigationHeld = false;
+      let releaseNavigation!: () => void;
+      const navigationReleased = new Promise<void>((resolve) => { releaseNavigation = resolve; });
+      await page.route("**/simulate?**", async (route) => {
+        if (route.request().headers()["rsc"] !== "1") return route.continue();
+        navigationHeld = true;
+        await navigationReleased;
+        await route.continue();
+      });
+      const previousUrl = page.url();
+      try {
+        await page.keyboard.press("Enter");
+        await expect.poll(() => navigationHeld).toBe(true);
+        await expect(transfer).toBeVisible();
+        await expect(sweep).toBeVisible();
+        // Stale allocation evidence must disappear, not the operation controls.
+        await expect(page.getByTestId("allocation-result")).not.toBeVisible();
+        await expect(page.getByRole("region", { name: "Comparación exacta de base y escenario", exact: true })).not.toBeVisible();
+      } finally {
+        releaseNavigation();
+      }
+      await expect(page).not.toHaveURL(previousUrl);
+      await expect(page.getByTestId("allocation-result")).toBeVisible();
+      if (operation === "transfer") {
+        await expect(transferButton).toBeFocused();
+        await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get("input")!).lists[0].votes).toBe(5000);
+      } else if (operation === "sensitivity") {
+        await expect(sweepButton).toBeFocused();
+        await expect(page.getByRole("region", { name: "Resultados del muestreo", exact: true })).toContainText("3 muestras evaluadas");
+      } else {
+        await expect(page.getByRole("heading", { name: "Resultado (municipal de PBA)", exact: true })).toBeFocused();
+        await expect.poll(() => new URL(page.url()).searchParams.has("baseInput")).toBe(false);
+      }
+    });
+  }
+
+  for (const operation of ["transfer", "sensitivity"] as const) {
+    test(`keyboard ${operation} error keeps focus and announces validation without navigation`, async ({ page }) => {
+      await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+      if (operation === "sensitivity") await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
+      const isTransfer = operation === "transfer";
+      const form = page.getByRole("form", { name: isTransfer ? "Transferencia de votos a total fijo" : "Muestreo de transferencias a total fijo", exact: true });
+      await form.getByLabel(isTransfer ? "Lista donante" : "Donante del muestreo").selectOption("A");
+      await form.getByLabel(isTransfer ? "Lista receptora" : "Receptora del muestreo").selectOption("B");
+      await form.getByLabel(isTransfer ? "Cantidad a transferir" : "Máximo a transferir").fill("6001");
+      if (!isTransfer) await form.getByLabel("Paso del muestreo").fill("1000");
+      await page.keyboard.press("Tab");
+      const submit = form.getByRole("button", { name: isTransfer ? "Transferir votos" : "Evaluar muestras", exact: true });
+      await expect(submit).toBeFocused();
+      const previousUrl = page.url();
+      await page.keyboard.press("Enter");
+      await expect(form.getByRole("alert")).toContainText("no puede superar");
+      await expect(submit).toBeFocused();
+      const announcement = form.locator(isTransfer ? "#transfer-errors" : "#sweep-errors");
+      await expect(announcement).toHaveAttribute("aria-live", "polite");
+      await expect(announcement).toHaveAttribute("aria-atomic", "true");
+      await expect(announcement).toContainText("no puede superar");
+      await expect(page).toHaveURL(previousUrl);
+      await expect(page.getByTestId("allocation-result")).toBeVisible();
+    });
+  }
+});
 
 test("transfers a rich baseline losslessly with keyboard controls and resets after changes", async ({ page }) => {
   const input = {
