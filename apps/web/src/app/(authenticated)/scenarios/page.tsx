@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.simulation.items[1].label };
+
 import {
   type ScenarioArtifact,
   type ScenarioRefusal,

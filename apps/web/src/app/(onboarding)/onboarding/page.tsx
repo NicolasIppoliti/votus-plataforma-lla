@@ -1,3 +1,5 @@
+export const metadata = { title: "Configurar organización" };
+
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";

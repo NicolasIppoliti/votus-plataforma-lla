@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.exploration.items[1].label };
+
 import type { ReactNode } from "react";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
 import { Alert } from "@/components/ui/alert";

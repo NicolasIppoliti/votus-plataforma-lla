@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.panorama.items[0].label };
+
 import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
 import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";

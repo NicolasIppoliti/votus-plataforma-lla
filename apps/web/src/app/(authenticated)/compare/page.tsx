@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.comparison.items[0].label };
+
 import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ComponentProps, ReactNode } from "react";
 import { redirect } from "next/navigation";

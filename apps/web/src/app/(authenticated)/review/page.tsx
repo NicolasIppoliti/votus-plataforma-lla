@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.evidence.items[1].label };
+
 import Link from "next/link";
 import "./review.css";
 import type { ReactNode } from "react";

@@ -1,3 +1,5 @@
+export const metadata = { title: "Página no encontrada" };
+
 import Link from "next/link";
 import type { ReactNode } from "react";
 
