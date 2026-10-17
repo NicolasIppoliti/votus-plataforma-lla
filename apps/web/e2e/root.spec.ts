@@ -13,6 +13,22 @@ import { prepareOrganization } from "./onboarding";
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
 
+test("document titles distinguish direct entries, redirects and client navigation (#595)", async ({ page }) => {
+  await withReviewItem(page, async () => {
+    for (const [route, title] of [["/", "Panorama"], ["/drilldown", "Exploración"], ["/compare", "Comparación"], ["/dashboard", "Panorama"]] as const) {
+      await page.goto(route);
+      await expect(page).toHaveTitle(`${title} · Votus`);
+    }
+    // A document-scoped marker survives App Router navigation, not a full reload.
+    await page.evaluate(() => { document.documentElement.dataset.titleNavigation = "client"; });
+    await page.getByRole("navigation", { name: "principal", exact: true }).getByRole("link", { name: "Comparación", exact: true }).click();
+    await expect(page).toHaveTitle("Comparación · Votus");
+    await expect(page.locator("html")).toHaveAttribute("data-title-navigation", "client");
+    await page.goto("/ruta-inexistente-595");
+    await expect(page).toHaveTitle("Página no encontrada · Votus");
+  });
+});
+
 for (const width of [1440, 981]) {
   test(`desktop topbar stays one bounded 64px row with a long organization at ${width}px`, async ({ page }) => {
     const organizationName = "Coordinación Electoral de la Sexta Sección — Coronel Rosales y distritos de la región";

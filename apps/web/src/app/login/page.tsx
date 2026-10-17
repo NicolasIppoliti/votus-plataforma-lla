@@ -1,3 +1,5 @@
+export const metadata = { title: "Iniciar sesión" };
+
 import type { ReactNode } from "react";
 import { LoginForm } from "./login-form";
 import { returnDestination } from "@/lib/auth/return-destination";

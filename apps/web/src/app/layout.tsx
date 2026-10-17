@@ -19,7 +19,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata = {
   robots: { index: false, follow: false },
-  title: "Votus | Análisis electoral interno",
+  title: { default: "Votus · Análisis electoral interno", template: "%s · Votus" },
   description:
     "Análisis electoral interno basado en evidencia oficial y pública, con el estado explícito de cada fuente.",
 };

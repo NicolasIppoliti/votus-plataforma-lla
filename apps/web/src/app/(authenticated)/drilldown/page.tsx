@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.exploration.items[0].label };
+
 import { profileServerSpan } from "@/lib/workspace/profile-server";
 import { sourceKindLabel } from "@/lib/results/source-kind-label";
 import type { ReactNode } from "react";

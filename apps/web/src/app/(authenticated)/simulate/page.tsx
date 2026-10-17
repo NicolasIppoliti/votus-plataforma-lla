@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.simulation.items[0].label };
+
 import { createHash } from "node:crypto";
 import { officialBaseContext } from "./official-base-context";
 import { loadScenarioSimulation } from "@/lib/scenarios/scenario-simulation";

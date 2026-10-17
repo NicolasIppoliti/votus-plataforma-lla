@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.evidence.items[0].label };
+
 import type { ReactNode } from "react";
 import { sourceKindLabel } from "@/lib/results/source-kind-label";
 import { Alert, type AlertVariant } from "@/components/ui/alert";
