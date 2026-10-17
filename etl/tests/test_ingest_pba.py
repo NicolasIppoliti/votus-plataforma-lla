@@ -540,6 +540,9 @@ _CROSSWALK = CrosswalkTable(
             national_distrito_code="02",
             national_seccion_code="027",
             name="Coronel de Marina Leonardo Rosales",
+            national_distrito_name="Buenos Aires",
+            national_seccion_name="Coronel de Marina L. Rosales",
+            names_source="National 2025 lineage, reviewed title-case display spelling (#609)",
         ),
     )
 )
@@ -681,7 +684,7 @@ def test_missing_113_crosswalk_quarantines_every_row_with_per_category_counts(
     assert "SENADORES PROVINCIALES: 15" in report
 
 
-def test_load_pba_rows_passes_the_translated_partido_name_to_the_db_boundary(
+def test_load_pba_rows_passes_reviewed_national_names_to_the_db_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     parse_result = ingest_pba(
@@ -724,8 +727,8 @@ def test_load_pba_rows_passes_the_translated_partido_name_to_the_db_boundary(
     distrito, seccion, names = captured[0]
     assert (distrito, seccion) == ("02", "027")
     assert names is not None
-    assert names.distrito is None
-    assert names.seccion == "CORONEL ROSALES"
+    assert names.distrito == "Buenos Aires"
+    assert names.seccion == "Coronel de Marina L. Rosales"
 
 
 def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
@@ -784,9 +787,9 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
         conn.commit()
         conn.close()
 
-    assert lineages == [("02", "027", None, "CORONEL ROSALES")], (
-        "the write must carry the NATIONAL pair and assign the PBA partido label "
-        "to canonical seccion_name, never to national distrito 02; "
+    assert lineages == [("02", "027", "Buenos Aires", "Coronel de Marina L. Rosales")], (
+        "the write must carry the NATIONAL pair and reviewed national names, "
+        "never the PBA partido label; "
         f"got {lineages}"
     )
     assert granularities == [("seccion", "seccion")], (
@@ -821,10 +824,10 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
         "the partido must survive as the national seccion; a distrito-only "
         "lineage is the province, not Coronel Rosales"
     )
-    assert all(row.jurisdiction_names.distrito is None for row in result.resolved)
-    assert all(row.jurisdiction_names.seccion == "CORONEL ROSALES" for row in result.resolved), (
-        "the source-native partido label becomes canonical seccion_name only after translation"
-    )
+    assert all(row.jurisdiction_names.distrito == "Buenos Aires" for row in result.resolved)
+    assert all(
+        row.jurisdiction_names.seccion == "Coronel de Marina L. Rosales" for row in result.resolved
+    ), "reviewed national names replace, rather than reuse, the PBA partido label"
     assert all(row.result.granularity == "seccion" for row in result.resolved), (
         "a PBA partido total is a seccion-level figure once translated"
     )

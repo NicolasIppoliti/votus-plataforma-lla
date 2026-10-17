@@ -131,6 +131,9 @@ class JurisdictionCrosswalkEntry:
     national_distrito_code: str
     national_seccion_code: str
     name: str
+    national_distrito_name: str | None = None
+    national_seccion_name: str | None = None
+    names_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -276,11 +279,26 @@ def load_crosswalk(path: Path) -> CrosswalkTable:
                     f"must be a digit-canonicalizable code, got {validated[field]!r}"
                 )
 
+        names: dict[str, str | None] = {}
+        for field in ("national_distrito_name", "national_seccion_name", "names_source"):
+            value = raw_entry.get(field)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise CrosswalkValidationError(
+                    f"crosswalk.yaml jurisdictions entry {index} field {field!r} "
+                    "must be a non-empty string or null"
+                )
+            names[field] = value
+        if (names["national_distrito_name"] or names["national_seccion_name"]) and not names[
+            "names_source"
+        ]:
+            raise CrosswalkValidationError("canonical national names require names_source")
+
         entry = JurisdictionCrosswalkEntry(
             pba_distrito_code=normalize_pba_distrito_code(validated["pba_distrito"]),
             national_distrito_code=normalize_distrito_code(validated["national_distrito"]),
             national_seccion_code=normalize_seccion_code(validated["national_seccion"]),
             name=validated["name"],
+            **names,
         )
         national_key = (
             normalize_distrito_code(entry.national_distrito_code),
