@@ -46,7 +46,7 @@ export function useWorkspaceSwitchStart() {
 
 export function WorkspaceIdentity() {
   const snapshot = useContext(WorkspaceContext)?.snapshot;
-  return <p className="workspace-identity">{snapshot?.organizationName
+  return <p className="workspace-identity" title={snapshot?.organizationName ?? undefined}>{snapshot?.organizationName
     ? <>Organización activa: <strong>{snapshot.organizationName}</strong></>
     : snapshot?.status === "selection_required" ? "Sin organización" : "Organización sin verificar"}</p>;
 }

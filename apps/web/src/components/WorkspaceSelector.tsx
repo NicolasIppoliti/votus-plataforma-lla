@@ -55,7 +55,7 @@ export function WorkspaceSelector({ initialSelection, onSwitchStart }: Workspace
   if (initialSelection.organizations.length === 0) return <Alert presentation="inline" variant="caveat">No se pudo cargar la lista parcial de organizaciones.</Alert>;
   return <form onSubmit={submit}>
     <label htmlFor={organizationId}>Organización</label>{" "}
-    <ResponsiveSelect id={organizationId} value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
+    <ResponsiveSelect id={organizationId} title={initialSelection.organizations.find((organization) => organization.id === selected)?.name} value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
       <option value="" disabled>Seleccionar organización</option>
       {initialSelection.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
     </ResponsiveSelect>{" "}

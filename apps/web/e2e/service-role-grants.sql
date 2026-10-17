@@ -55,7 +55,7 @@ grant update,delete on public.review_item to workspace_audit_owner;
 create policy e2e_workspace_audit_review_all on public.review_item for all to workspace_audit_owner using(true) with check(true);
 grant create on schema public to workspace_audit_owner;
 set role workspace_audit_owner;
-create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid) returns jsonb
+create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid, p_organization_name text default 'E2E Authorized Review Browser') returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
   organization_id uuid := gen_random_uuid();
@@ -72,7 +72,7 @@ begin
   if not found then raise exception 'e2e authorized review fixture review item is missing or collides'; end if;
   if exists (select 1 from workspace_private.organization where slug = 'e2e-authorized-review-browser') then raise exception 'e2e authorized review fixture organization collides'; end if;
     insert into workspace_private.organization(id, slug, display_name, entitlement_revision)
-  values (organization_id, 'e2e-authorized-review-browser', 'E2E Authorized Review Browser', 1);
+  values (organization_id, 'e2e-authorized-review-browser', p_organization_name, 1);
   insert into workspace_private.organization_membership(organization_id, user_id) values (organization_id, p_user_id);
   insert into workspace_private.section_scope values (distrito_code, seccion_code)
   on conflict do nothing returning true into owns_section_scope;
@@ -347,13 +347,13 @@ begin
   return jsonb_build_object('revoked', true, 'organization_id', fixture_organization_id,
     'revoked_scope_count', revoked_scope_count);
 end $$;
-revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.e2e_cleanup_authorized_review_fixture(jsonb) from public, anon, authenticated;
 revoke all on function public.e2e_setup_authorized_fiscal_fixture(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.e2e_extend_authorized_fiscal_fixture(jsonb,text,text) from public, anon, authenticated;
 revoke all on function public.e2e_cleanup_authorized_fiscal_fixture(jsonb) from public, anon, authenticated;
 revoke all on function public.e2e_revoke_authorized_fiscal_fixture(jsonb) from public, anon, authenticated;
-grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid) to service_role;
+grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid, text) to service_role;
 grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role;
 grant execute on function public.e2e_setup_authorized_fiscal_fixture(uuid,text,text) to service_role;
 grant execute on function public.e2e_extend_authorized_fiscal_fixture(jsonb,text,text) to service_role;

@@ -12,7 +12,7 @@ export const REVIEW_ITEM = {
   note: `The official mesa identity needs manual review because ${"the source lineage remains ambiguous; ".repeat(6)}`,
 } as const;
 
-export async function withReviewItem<T>(page: Page, run: () => Promise<T>, options: { selectOrganization?: boolean } = {}): Promise<T> {
+export async function withReviewItem<T>(page: Page, run: () => Promise<T>, options: { selectOrganization?: boolean; organizationName?: string } = {}): Promise<T> {
   const environment = assertE2eEnvironment(process.env);
   const admin = createClient(
     environment.NEXT_PUBLIC_SUPABASE_URL,
@@ -26,7 +26,7 @@ export async function withReviewItem<T>(page: Page, run: () => Promise<T>, optio
   }
   const { data: auth, error: authError } = await admin.auth.admin.listUsers();
   const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase()); if (authError || !user) { const cause = new Error(`failed to resolve fixture user: ${authError?.message ?? "user missing"}`); const { error } = await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id); if (error) throw new AggregateError([cause, new Error(error.message)], "review fixture setup and cleanup failed"); throw cause; }
-  const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_review_fixture", { p_user_id: user.id, p_review_item_id: REVIEW_ITEM.id }); if (fixtureError || typeof fixture?.organization_id !== "string") { const cause = new Error(`failed to set up authorized review fixture: ${fixtureError?.message ?? "invalid response"}`); const cleanup = fixtureError ? await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id) : await admin.rpc("e2e_cleanup_authorized_review_fixture", { p_fixture: fixture }); if (cleanup.error) throw new AggregateError([cause, new Error(cleanup.error.message)], "review fixture setup and cleanup failed"); throw cause; }
+  const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_review_fixture", { p_user_id: user.id, p_review_item_id: REVIEW_ITEM.id, ...(options.organizationName ? { p_organization_name: options.organizationName } : {}) }); if (fixtureError || typeof fixture?.organization_id !== "string") { const cause = new Error(`failed to set up authorized review fixture: ${fixtureError?.message ?? "invalid response"}`); const cleanup = fixtureError ? await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id) : await admin.rpc("e2e_cleanup_authorized_review_fixture", { p_fixture: fixture }); if (cleanup.error) throw new AggregateError([cause, new Error(cleanup.error.message)], "review fixture setup and cleanup failed"); throw cause; }
 
   let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
   try {
