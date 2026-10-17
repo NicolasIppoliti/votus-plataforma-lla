@@ -381,6 +381,7 @@ for (const windowWidth of [1280, 640]) {
         await tabTo(page, account);
         await page.keyboard.press("Enter");
         await tabTo(page, drawer.getByRole("link", { name: "Guía de Votus", exact: true }));
+        await tabTo(page, drawer.getByRole("link", { name: "Privacidad", exact: true }));
         await tabTo(page, drawer.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
         await page.keyboard.press("Escape");
         await expectKeyboardFocus(account);
@@ -545,6 +546,7 @@ test.describe("the review route reflects the disposable database", () => {
         await tabTo(page, account);
         await page.keyboard.press("Enter");
         await tabTo(page, workspaceControls.getByRole("link", { name: "Guía de Votus", exact: true }));
+        await tabTo(page, workspaceControls.getByRole("link", { name: "Privacidad", exact: true }));
         await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
         await page.keyboard.press("Escape");
         await expectKeyboardFocus(account);
