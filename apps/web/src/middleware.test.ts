@@ -49,6 +49,16 @@ afterEach(() => {
 });
 
 describe("middleware", () => {
+  it("keeps privacy public without probing authentication but protects nested paths", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const response = await middleware(new NextRequest("http://localhost:3000/privacidad"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    expect(mocks.createServerClient).not.toHaveBeenCalled();
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    const nested = await middleware(new NextRequest("http://localhost:3000/privacidad/private"));
+    expect(nested.status).toBe(307);
+  });
   it.each(["/", "/login", "/dashboard", "/api/session"])("adds fresh security headers without changing anonymous outcomes at %s", async pathname => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
     const first = await middleware(new NextRequest(`http://localhost:3000${pathname}`, { headers: { "x-nonce": "spoofed", "content-security-policy": "script-src *" } }));

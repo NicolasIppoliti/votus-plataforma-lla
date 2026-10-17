@@ -16,6 +16,7 @@ export function AccountDisclosure({ children }: { children: ReactNode }) {
     <details className="workspace-account" onKeyDown={handleKeyDown}>
       <summary>Cuenta</summary>
       <Link href="/onboarding?paso=alcance">Guía de Votus</Link>
+      <Link href="/privacidad">Privacidad</Link>
       {children}
     </details>
   );
