@@ -1618,12 +1618,14 @@ def test_workspace_context_selection_switching_and_session_isolation(owned_datab
         }
         first = rpc("bootstrap_workspace_context", session_id)
         assert first == {"status": "active", "context_revision": 2,
-            "organization": {"id": str(organizations[0]), "display_name": "Active"}}
+            "organization": {"id": str(organizations[0]), "display_name": "Active"},
+            "onboarding_completed": False}
         assert rpc("bootstrap_workspace_context", session_id) == first
         assert rpc("bootstrap_workspace_context", other_session) == unselected
         assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "conflict", "context_revision": 2}  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "active", "context_revision": 2,
-            "organization": {"id": str(organizations[0]), "display_name": "Active"}}
+            "organization": {"id": str(organizations[0]), "display_name": "Active"},
+            "onboarding_completed": False}
         assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "same_state", "context_revision": 2}  # noqa: E501
         assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "conflict", "context_revision": 2}  # noqa: E501
         assert rpc("current_workspace", other_session) == {"status": "selection_required", "context_revision": 1}  # noqa: E501
@@ -2026,6 +2028,9 @@ def test_workspace_admin_transitions_acl_down_and_reapply(owned_database) -> Non
         # Non-superuser creators retain bootstrap-granted ADMIN-only edges for
         # every created owner, including query_owner. They confer no INHERIT/SET.
         assert all(row[3:] == (True, False, False) for row in role_edges_before)
+        # Remove onboarding policies before older workspace downs validate their inventory.
+        # Track this down so restore_workspace reapplies it after its dependencies.
+        roll_back_workspace("20261017000000")
         _set_latest_review_context_level(admin_dsn, 0)
         roll_back_workspace(CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION)
         roll_back_workspace(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
