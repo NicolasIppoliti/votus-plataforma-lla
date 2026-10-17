@@ -22,7 +22,7 @@ it("loads explicit IBM Plex fonts while preserving the root document contract", 
   ).toHaveLength(2);
   expect(rootLayoutSource).toMatch(/<html\b[^>]*\slang="es"(?=\s|>)[^>]*>/);
   expect(rootLayoutSource).toContain('className="skip-link" href="#main-content"');
-  expect(rootLayoutSource).toContain("Votus | Análisis electoral interno");
+  expect(rootLayoutSource).toContain("Votus · Análisis electoral interno");
   expect(rootLayoutSource).toContain(
     "className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}",
   );

@@ -1,3 +1,7 @@
+import { NAVIGATION_GROUPS } from "../navigation";
+
+export const metadata = { title: NAVIGATION_GROUPS.evidence.items[2].label };
+
 import type { ReactNode } from "react";
 import styles from "./fiscalizacion.module.css";
 import { CoverageChart } from "./CoverageChart";
