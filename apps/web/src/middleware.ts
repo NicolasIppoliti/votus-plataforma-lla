@@ -8,12 +8,12 @@ import { securityHeaders } from "@/lib/security/headers";
 
 /**
  * Routes that MUST stay reachable without authentication. Kept to the
- * absolute minimum — the login page itself and its Supabase Auth callback —
+ * absolute minimum — login, its Supabase Auth callback and the privacy notice —
  * so no in-scope electoral data route is ever added here by mistake
  * (specs/access-control/spec.md: "No feature in scope MUST be reachable
  * without authentication").
  */
-const PUBLIC_ROUTES = new Set(["/login", "/auth/callback"]);
+const PUBLIC_ROUTES = new Set(["/login", "/auth/callback", "/privacidad"]);
 const ENDED_SESSION_CODES = new Set([
   "bad_jwt", "session_not_found", "session_expired", "refresh_token_not_found",
   "refresh_token_already_used", "user_not_found", "user_banned",

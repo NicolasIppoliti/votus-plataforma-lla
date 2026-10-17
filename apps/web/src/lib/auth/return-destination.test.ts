@@ -29,7 +29,7 @@ it.each(["/%2F%2Fevil.test", "/%5Cevil.test", "/compare%2F%2Fevil.test", "/compa
   expect(new URL(returnDestination(destination), "https://votus.test").origin).toBe("https://votus.test");
 });
 
-it.each([undefined, null, [], {}, "", "https://evil.test/drilldown", "//evil.test/", "/\\evil.test", "/%2f%2fevil.test", "/compare/../login", "/compare/", "/login", "/auth/callback", "/api/workspace", "/unknown", "/compare#fragment", "/compare?bad=%", "/compare?bad=%FF", "/compare?bad=%0D%0A", "/compare?bad=\n", " /compare"])("defaults invalid destination %j to the briefing", (value) => {
+it.each([undefined, null, [], {}, "", "https://evil.test/drilldown", "//evil.test/", "/\\evil.test", "/%2f%2fevil.test", "/compare/../login", "/compare/", "/login", "/auth/callback", "/privacidad", "/api/workspace", "/unknown", "/compare#fragment", "/compare?bad=%", "/compare?bad=%FF", "/compare?bad=%0D%0A", "/compare?bad=\n", " /compare"])("defaults invalid destination %j to the briefing", (value) => {
   expect(returnDestination(value)).toBe("/");
   expect(loginDestination(value)).toBe("/login");
 });

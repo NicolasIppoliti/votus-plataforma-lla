@@ -575,6 +575,10 @@ test("account controls live in the topbar and mobile drawer and preserve keyboar
   await expect(guide).toBeFocused();
   await expect(guide).toHaveAttribute("href", "/onboarding?paso=alcance");
   await page.keyboard.press("Tab");
+  const privacy = controls.getByRole("link", { name: "Privacidad", exact: true });
+  await expect(privacy).toBeFocused();
+  await expect(privacy).toHaveAttribute("href", "/privacidad");
+  await page.keyboard.press("Tab");
   await expect(signOut).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(signOut).toBeHidden();
@@ -606,6 +610,10 @@ test("account controls live in the topbar and mobile drawer and preserve keyboar
   await page.keyboard.press("Enter");
   await page.keyboard.press("Tab");
   await expect(mobileControls.getByRole("link", { name: "Guía de Votus", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  const mobilePrivacy = mobileControls.getByRole("link", { name: "Privacidad", exact: true });
+  await expect(mobilePrivacy).toBeFocused();
+  await expect(mobilePrivacy).toHaveAttribute("href", "/privacidad");
   await page.keyboard.press("Tab");
   const mobileSignOut = mobileControls.getByRole("button", { name: "Cerrar sesión", exact: true });
   await expect(mobileSignOut).toBeFocused();

@@ -61,6 +61,12 @@ it.each(["/", "/scenarios", "/drilldown", "/municipal", "/compare", "/simulate",
   expect(markup.match(/<aside\b[^>]*>[\s\S]*?<\/aside>/)?.[0]).not.toContain("Esta herramienta no es una fuente electoral oficial.");
 });
 
+it("links to privacy from the authenticated account area", async () => {
+  const markup = await renderLayout("/");
+  const account = markup.match(/<details class="workspace-account"[\s\S]*?<\/details>/)?.[0] ?? "";
+  expect(account).toContain('href="/privacidad">Privacidad</a>');
+});
+
 it("renders decorative icons for every navigation subitem", async () => {
   const markup = primaryNavigation(await renderLayout("/scenarios"));
   const subitems = [...markup.matchAll(/<a class="navigation-subitem"[^>]*>[\s\S]*?<\/a>/g)];

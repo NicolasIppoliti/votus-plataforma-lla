@@ -1,12 +1,13 @@
 export const metadata = { title: "Iniciar sesión" };
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { LoginForm } from "./login-form";
 import { returnDestination } from "@/lib/auth/return-destination";
 import "./login.css";
 
 /**
- * The one public route this app exposes (task 9.5/9.6). Deliberately
+ * Public sign-in entry point (task 9.5/9.6). Deliberately
  * outside `(authenticated)/`, deliberately carries no electoral data.
  */
 export default async function LoginPage({ searchParams }: {
@@ -31,6 +32,7 @@ export default async function LoginPage({ searchParams }: {
         </header>
         <LoginForm returnTo={destination} />
         <p className="login-card__access">Acceso exclusivo para usuarios autorizados.</p>
+        <p><Link href="/privacidad">Privacidad</Link></p>
       </section>
     </main>
   );
