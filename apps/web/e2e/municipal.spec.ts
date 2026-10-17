@@ -24,6 +24,27 @@ const { scope: MUNICIPAL_SCOPE, seed: MUNICIPAL_SOURCE_ISOLATION_FIXTURE } =
 const baseURL = scenarioBaseUrl(SPEC, environment);
 const identity = resultScenarioIdentity(SPEC);
 
+// The municipal scenario owns both the configured server and result fixtures;
+// the shared root server intentionally has no municipal election configured.
+test("MapLibre renders under enforced CSP without violations", async ({ page }) => {
+  await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
+    const violations: string[] = [];
+    const errors: string[] = [];
+    page.on("console", message => { if (message.type() === "error" && /content security policy|violates.*directive/i.test(message.text())) errors.push(message.text()); });
+    await page.exposeFunction("recordMapCspViolation", (directive: string) => violations.push(directive));
+    await page.addInitScript(() => document.addEventListener("securitypolicyviolation", event => {
+      void (window as unknown as { recordMapCspViolation(value: string): Promise<void> }).recordMapCspViolation(event.effectiveDirective);
+    }));
+    const response = await page.goto(new URL("/municipal", baseURL).toString());
+    expect(response!.headers()["content-security-policy"]).toContain("worker-src 'self' blob:");
+    await page.getByRole("button", { name: "Activar mapa interactivo de la sección", exact: true }).click();
+    await expect(page.locator("canvas.maplibregl-canvas")).toBeVisible();
+    await expect(page.getByText(/Mapa de la sección .* disponible/)).toBeVisible();
+    expect(violations).toEqual([]);
+    expect(errors).toEqual([]);
+  }));
+});
+
 interface WorkspaceFixture { organization_id: string; user_id: string; distrito_code: string; seccion_code: string; }
 
 // #467 lives in the existing municipal scenario so the release gate uses its

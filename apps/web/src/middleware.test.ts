@@ -49,6 +49,29 @@ afterEach(() => {
 });
 
 describe("middleware", () => {
+  it.each(["/", "/login", "/dashboard", "/api/session"])("adds fresh security headers without changing anonymous outcomes at %s", async pathname => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const first = await middleware(new NextRequest(`http://localhost:3000${pathname}`, { headers: { "x-nonce": "spoofed", "content-security-policy": "script-src *" } }));
+    const second = await middleware(new NextRequest(`http://localhost:3000${pathname}`));
+    expect(first.status).toBe(pathname === "/login" ? 200 : pathname === "/api/session" ? 401 : 307);
+    expect(first.headers.get("x-content-type-options")).toBe("nosniff");
+    const policy = first.headers.get("content-security-policy");
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).toMatch(/'nonce-[A-Za-z0-9+/=]+'/);
+    expect(policy).not.toContain("spoofed");
+    expect(second.headers.get("content-security-policy")).not.toBe(policy);
+    if (pathname === "/login") expect(first.headers.get("x-middleware-request-content-security-policy")).toBe(policy);
+  });
+
+  it.each(["/", "/login", "/dashboard", "/api/session"])("preserves the original authenticated pass-through at %s", async pathname => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "authenticated-operator" } }, error: null });
+    const response = await middleware(new NextRequest(`http://localhost:3000${pathname}`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(mocks.createServerClient).toHaveBeenCalledTimes(pathname === "/login" ? 0 : 1);
+  });
+
   it.each(["/drilldown?electionId=2025&distrito=02", "/compare?leftElectionId=2023&rightElectionId=2025", "/simulate?scenario=%7B%22seats%22%3A9%7D"])("preserves the requested analysis at %s", async (destination) => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
     const response = await middleware(new NextRequest(`http://localhost:3000${destination}`));

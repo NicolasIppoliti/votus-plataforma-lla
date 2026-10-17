@@ -4,6 +4,7 @@ import { isAuthApiError, isAuthSessionMissingError } from "@supabase/supabase-js
 import { NextResponse, type NextRequest } from "next/server";
 import { loginDestination, returnDestination } from "@/lib/auth/return-destination";
 import { resolveSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
+import { securityHeaders } from "@/lib/security/headers";
 
 /**
  * Routes that MUST stay reachable without authentication. Kept to the
@@ -38,10 +39,25 @@ function sessionProbeResponse(response: NextResponse, ended: boolean): NextRespo
  * (specs/access-control/spec.md, "Single authenticated role").
  */
 export async function middleware(request: NextRequest): Promise<NextResponse> {
+  const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("base64");
+  const headers = securityHeaders({
+    nonce,
+    supabaseUrl: process.env["NEXT_PUBLIC_SUPABASE_URL"],
+    development: process.env.NODE_ENV === "development",
+  });
+  // Overwrite caller-supplied policy before Next extracts the render nonce.
+  request.headers.set("x-nonce", nonce);
+  request.headers.set("Content-Security-Policy", headers["Content-Security-Policy"]!);
+  const response = await authenticatedResponse(request);
+  for (const [key, value] of Object.entries(headers)) response.headers.set(key, value);
+  return response;
+}
+
+async function authenticatedResponse(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_ROUTES.has(pathname)) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: new Headers(request.headers) } });
   }
 
   let profileContext: ProfileContext | undefined;

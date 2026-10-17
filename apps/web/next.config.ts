@@ -1,9 +1,18 @@
 import type { NextConfig } from "next";
 import { resolve } from "node:path";
+import { securityHeaders } from "./src/lib/security/headers";
 
 const e2eTestProxyEnabled = process.env.VOTUS_E2E_TEST_PROXY === "1";
 
 const nextConfig: NextConfig = {
+  headers() {
+    // Also covers static assets and framework error responses. Middleware
+    // replaces this nonce-free fallback for routes that render application HTML.
+    return [{ source: "/:path*", headers: Object.entries(securityHeaders({
+      supabaseUrl: process.env["NEXT_PUBLIC_SUPABASE_URL"],
+      development: process.env.NODE_ENV === "development",
+    })).map(([key, value]) => ({ key, value })) }];
+  },
   // `pnpm build` runs the TypeScript 7 CLI before Next. Next resolves the
   // `typescript` package directly, which is the TypeScript 6 API alias needed
   // by typescript-eslint and exposes `tsc6`, not the application `tsc` bin.
