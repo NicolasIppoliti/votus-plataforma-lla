@@ -482,7 +482,7 @@ test.describe("the municipal route requires workspace-authorized official result
     }, null, 2) + "\n");
   });
 
-  test("test_authorized_workspace_webgl_unavailable_preserves_outline_and_exact_table", async ({ page }) => {
+  test("test_authorized_workspace_webgl_unavailable_preserves_outline_and_exact_table", { tag: "@cross-browser" }, async ({ page }) => {
     await page.addInitScript(() => {
       const original = HTMLCanvasElement.prototype.getContext;
       HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...args) {

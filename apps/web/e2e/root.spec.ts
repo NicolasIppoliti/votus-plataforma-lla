@@ -169,7 +169,7 @@ test("without an organization onboarding is a prerequisite, not a context failur
   await expect(page.getByRole("main")).not.toContainText("No se pudo verificar el contexto autorizado.");
 });
 
-test("electoral context stays labelled and readable at 320px with explicit source opt-in", async ({ page }) => {
+test("electoral context stays labelled and readable at 320px with explicit source opt-in", { tag: "@cross-browser" }, async ({ page }) => {
   // With an active organization (#598: without one the bar is a prerequisite note).
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 320, height: 800 });

@@ -65,6 +65,7 @@ export const RELEASE_GATE_MODE = {
 	FULL: "full",
 	SQL: "sql",
 	BROWSER: "browser",
+	CROSS_BROWSER: "cross-browser",
 	FOCUSED: "focused",
 	RELEASE_PROOF_ONLY: "release-proof-only",
 	SCALE_PROOF_ONLY: "scale-proof-only",
@@ -462,7 +463,7 @@ function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
 		const laneArgs = argv.filter((arg) => arg !== "--inspect-plan" && arg !== "--analyze-production-build");
 		if (
 			laneArgs.length !== 2 || laneArgs[0] !== "--lane" ||
-			(laneArgs[1] !== RELEASE_GATE_MODE.SQL && laneArgs[1] !== RELEASE_GATE_MODE.BROWSER)
+			(laneArgs[1] !== RELEASE_GATE_MODE.SQL && laneArgs[1] !== RELEASE_GATE_MODE.BROWSER && laneArgs[1] !== RELEASE_GATE_MODE.CROSS_BROWSER)
 		)
 			throw new Error("lane requires exactly one sql|browser value and cannot combine with focused or reduced modes");
 		return laneArgs[1];
@@ -484,6 +485,10 @@ function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
 	if (releaseProofOnly) return RELEASE_GATE_MODE.RELEASE_PROOF_ONLY;
 	return RELEASE_GATE_MODE.FULL;
 }
+
+export const CROSS_BROWSER_SPECS = [
+	"e2e/auth.spec.ts", "e2e/review.spec.ts", "e2e/root.spec.ts", "e2e/municipal.spec.ts",
+] as const;
 
 const FOCUSED_E2E_SPEC_PATTERN = /^e2e\/[a-z][a-z0-9-]*\.spec\.ts$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F]/;
@@ -532,10 +537,10 @@ export function createReleaseGatePlan(
 	selectedSpecs: readonly string[] = EXPECTED_E2E_SPECS,
 ): ReleaseGatePlan {
 	const resolvedSelectedSpecs =
-		mode === RELEASE_GATE_MODE.ETL ? [] : mode === RELEASE_GATE_MODE.FOCUSED
+		mode === RELEASE_GATE_MODE.CROSS_BROWSER ? [...CROSS_BROWSER_SPECS] : mode === RELEASE_GATE_MODE.ETL ? [] : mode === RELEASE_GATE_MODE.FOCUSED
 			? parseFocusedE2eSelection(selectedSpecs)
 			: mode === RELEASE_GATE_MODE.SQL ? [] : [...EXPECTED_E2E_SPECS];
-	const omitPgTap = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY || mode === RELEASE_GATE_MODE.BROWSER || mode === RELEASE_GATE_MODE.ETL;
+	const omitPgTap = mode === RELEASE_GATE_MODE.CROSS_BROWSER || mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY || mode === RELEASE_GATE_MODE.BROWSER || mode === RELEASE_GATE_MODE.ETL;
 	const scaleProofOnly = mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	return {
 		mode,
@@ -564,12 +569,12 @@ export function createReleaseGatePlan(
 			? []
 			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
 		requireBrowserCapability:
-			mode === RELEASE_GATE_MODE.BROWSER ||
+			mode === RELEASE_GATE_MODE.CROSS_BROWSER || mode === RELEASE_GATE_MODE.BROWSER ||
 			mode === RELEASE_GATE_MODE.FULL ||
 			mode === RELEASE_GATE_MODE.FOCUSED ||
 			mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY,
 		runBrowser:
-			mode === RELEASE_GATE_MODE.BROWSER ||
+			mode === RELEASE_GATE_MODE.CROSS_BROWSER || mode === RELEASE_GATE_MODE.BROWSER ||
 			mode === RELEASE_GATE_MODE.FULL || mode === RELEASE_GATE_MODE.FOCUSED,
 		analyzeProductionBuild: false,
 	};
@@ -632,7 +637,7 @@ export async function runReleaseGateCli(
 			? parseFocusedE2eCliSelection(argv)
 			: EXPECTED_E2E_SPECS;
 	if (mode !== RELEASE_GATE_MODE.FOCUSED) {
-		const allowed = mode === RELEASE_GATE_MODE.SQL || mode === RELEASE_GATE_MODE.BROWSER
+		const allowed = mode === RELEASE_GATE_MODE.CROSS_BROWSER || mode === RELEASE_GATE_MODE.SQL || mode === RELEASE_GATE_MODE.BROWSER
 			? ["--inspect-plan", "--lane", mode, ...(mode === RELEASE_GATE_MODE.BROWSER ? ["--analyze-production-build"] : [])]
 			: ["--inspect-plan", "--release-proof-only", "--scale-proof-only", "--rollback-proofs-only"];
 		if (argv.some((arg) => !allowed.includes(arg)))

@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import { OwnedEtlFailure, startOwnedEtlChild } from "./owned-etl-child.ts";
 import { fileURLToPath } from "node:url";
 
-import { chromium } from "@playwright/test";
+import { chromium, firefox, webkit } from "@playwright/test";
 import { z } from "zod";
 import { PlaywrightFailure, playwrightFailure } from "../e2e/playwright-failure-diagnostics.ts";
 import {
@@ -507,7 +507,7 @@ function assertPinnedVersion(actual: string, expected: string, label: string): v
 	if (actual.trim() !== expected)
 		throw new Error(`${label} version mismatch; expected ${expected}. Use the project-pinned toolchain`);
 }
-function assertIsolationCapabilities(requireBrowser: boolean): void {
+function assertIsolationCapabilities(requireBrowser: boolean, crossBrowser = false): void {
 	if (process.env.SUPABASE_EXPERIMENTAL_STACK !== undefined)
 		throw new Error("Unset SUPABASE_EXPERIMENTAL_STACK; the owned gate requires the verified legacy backend");
 	const pins = readToolchainPins();
@@ -542,7 +542,7 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 		throw new Error(
 			"Supabase CLI lacks the isolation and owned-cleanup flags required by the gate",
 		);
-	if (requireBrowser && !existsSync(chromium.executablePath()))
+	if (requireBrowser && !(crossBrowser ? [firefox, webkit] : [chromium]).every(browser => existsSync(browser.executablePath())))
 		throw new Error(
 			"Playwright Chromium is not installed; run the package-supported browser install first",
 		);
@@ -1323,7 +1323,7 @@ async function executeGate(
 			),
 	);
 	await measurePreflight(timing, PREFLIGHT_STEP.ISOLATION_CAPABILITIES, async () => {
-		assertIsolationCapabilities(plan.requireBrowserCapability);
+		assertIsolationCapabilities(plan.requireBrowserCapability, plan.mode === RELEASE_GATE_MODE.CROSS_BROWSER);
 	});
 	await measurePreflight(
 		timing,
@@ -1677,7 +1677,8 @@ async function executeGate(
 		),
 		VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
 		// Lanes select orchestration; browser evidence still requires the full inventory.
-		VOTUS_E2E_GATE_MODE: plan.mode === RELEASE_GATE_MODE.BROWSER ? RELEASE_GATE_MODE.FULL : plan.mode,
+		VOTUS_E2E_GATE_MODE: plan.mode === RELEASE_GATE_MODE.BROWSER ? RELEASE_GATE_MODE.FULL : plan.mode === RELEASE_GATE_MODE.CROSS_BROWSER ? RELEASE_GATE_MODE.FOCUSED : plan.mode,
+		VOTUS_E2E_CROSS_BROWSER: plan.mode === RELEASE_GATE_MODE.CROSS_BROWSER ? "1" : "0",
 		VOTUS_E2E_SELECTED_SPECS: JSON.stringify(plan.selectedSpecs),
 	};
 	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {

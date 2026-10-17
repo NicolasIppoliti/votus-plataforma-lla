@@ -1,3 +1,4 @@
+import { CROSS_BROWSER_SPECS } from "../scripts/e2e-gate-runtime";
 import { writeFileSync } from "node:fs";
 import { mobileFormFactsFromAttachments } from "./mobile-form-facts.ts";
 import { fileURLToPath } from "node:url";
@@ -135,7 +136,16 @@ export function assertFocusedGateReport(
 		throw new Error(`e2e focused gate failed: ${errors.join("; ")}`);
 }
 
+export function assertCrossBrowserInventory(tests: readonly { project: string; spec: string; tags: readonly string[] }[]): void {
+	const expected = ["firefox", "webkit"].flatMap(project => CROSS_BROWSER_SPECS.map(spec => `${project}:${spec}`)).sort();
+	const actual = tests.map(test => `${test.project}:${test.spec}`).sort();
+	if (JSON.stringify(actual) !== JSON.stringify(expected) || tests.some(test => !test.tags.includes("@cross-browser") || test.tags.includes("@chromium-only")))
+		throw new Error("cross-browser inventory requires exactly four critical journeys in each engine");
+}
+
 export default class ReleaseGateReporter implements Reporter {
+	private crossBrowserInventoryValid = true;
+	private readonly projectsByTestId = new Map<string, string>();
 	private readonly expectedTestIdsBySpec = new Map<string, string[]>();
 	private readonly expectedSpecsByTestId = new Map<string, string>();
 	private readonly results = new Map<string, GateTestResult>();
@@ -161,6 +171,11 @@ export default class ReleaseGateReporter implements Reporter {
 
 	onBegin(config: FullConfig, suite: Suite): void {
 		this.outputDirectory = config.projects?.[0]?.outputDir;
+		if (process.env["VOTUS_E2E_CROSS_BROWSER"] === "1") {
+			try {
+				assertCrossBrowserInventory(suite.allTests().map(test => ({ project: test.parent.project()?.name ?? "", spec: relativeTestSpec(test), tags: test.tags })));
+			} catch { this.crossBrowserInventoryValid = false; }
+		}
 		this.results.clear();
 		this.identities.clear();
 		this.attempts = [];
@@ -172,6 +187,7 @@ export default class ReleaseGateReporter implements Reporter {
 		for (const spec of this.selection.selected)
 			this.expectedTestIdsBySpec.set(spec, []);
 		for (const test of suite.allTests()) {
+			if (process.env["VOTUS_E2E_CROSS_BROWSER"] === "1") this.projectsByTestId.set(test.id, test.parent.project()?.name ?? "");
 			const spec = relativeTestSpec(test);
 			const expectedTestIds = this.expectedTestIdsBySpec.get(spec);
 			if (!expectedTestIds || this.expectedSpecsByTestId.has(test.id)) {
@@ -287,6 +303,7 @@ export default class ReleaseGateReporter implements Reporter {
 				: result.status;
 		let report: CompanionReport = "rejected";
 		try {
+			if (!this.crossBrowserInventoryValid) throw new Error("cross-browser discovery inventory mismatch");
 			if (this.selection.mode === RECEIPT_MODE.FULL)
 				assertGateReport(completed, suiteStatus);
 			else assertFocusedGateReport(completed, suiteStatus, this.selection.selected);
@@ -320,6 +337,12 @@ export default class ReleaseGateReporter implements Reporter {
 			// Never include titles, errors, URLs, session material or result payloads.
 			if (this.outputDirectory) {
 				try {
+					if (process.env["VOTUS_E2E_CROSS_BROWSER"] === "1") writeFileSync(path.join(this.outputDirectory, "e2e-facts-cross-browser.json"), JSON.stringify(
+						["firefox", "webkit"].map(project => ({ project, counts: Object.fromEntries(
+							["passed", "failed", "timedOut", "skipped", "interrupted"].map(status => [status,
+								[...this.results.entries()].filter(([id, item]) => this.projectsByTestId.get(id) === project && item.status === status).length]),
+						) })),
+					));
 					writeFileSync(path.join(this.outputDirectory, "e2e-facts-test-counts.json"), JSON.stringify(
 						this.selection.selected.map(spec => ({ spec, counts: Object.fromEntries(
 							["passed", "failed", "timedOut", "skipped", "interrupted"].map(status => [status,

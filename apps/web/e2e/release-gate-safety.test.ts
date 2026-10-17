@@ -3111,6 +3111,7 @@ describe("base contracts", () => {
 			"web-static",
 			"etl-release",
 			"e2e-release",
+			"e2e-cross-browser",
 			"e2e-sql",
 			"verify",
 		]);
@@ -3227,7 +3228,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(19);
+		expect(actionReferences).toHaveLength(24);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});
