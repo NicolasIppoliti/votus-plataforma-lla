@@ -6,6 +6,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { test as nextTest } from "./review-test-fixture";
 import { zoomTest } from "./review-zoom-test-fixture";
 
+import { assertTerritorialFilter } from "./assert-territorial-filter";
 import { formatCount } from "../src/lib/format/number";
 import { assertE2eEnvironment } from "./gate-contract";
 import {
@@ -88,6 +89,8 @@ test("official section completeness is disclosed through the real RPC", async ({
     await expect(circuits.getByRole("row").filter({ has: page.getByRole("button", { name: "00001", exact: true }) })).toContainText("provisorio · 50 % de mesas");
     await expect(circuits.getByRole("row").filter({ has: page.getByRole("button", { name: "00002", exact: true }) })).toContainText("Sin votos positivos");
     await expect(circuits.getByRole("row")).toHaveCount(3);
+    const breakdown = page.getByRole("region", { name: "Desglose territorial", exact: true });
+    await assertTerritorialFilter(breakdown, breakdown.getByRole("searchbox", { name: "Filtrar territorios", exact: true }), "00001", 2, 1);
   }));
 });
 

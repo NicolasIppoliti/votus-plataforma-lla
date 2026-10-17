@@ -1,4 +1,5 @@
 "use client";
+import { TerritorialFilterStatus } from "@/components/TerritorialFilterStatus";
 import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useState } from "react";
@@ -44,6 +45,7 @@ export function ComparisonChildren({ outcomes, party }: { outcomes: [OfficialSec
     <header><div><h2 id="compare-child-heading">Cambio por territorio</h2><p>Circuitos · agrupación seleccionada · B − A</p></div>
       <details className={styles.selectionNotes} data-child-controls="" open={available}><summary>Controles del siguiente nivel</summary><div className={styles.childControls}><div><label htmlFor="compare-child-search">Filtrar territorios de la tabla</label><input id="compare-child-search" type="search" placeholder="Buscar por código" disabled={!available} value={search} onChange={event => setSearch(event.target.value)} /></div>
         <div><label htmlFor="compare-child-order">Ordenar territorios</label><ResponsiveSelect id="compare-child-order" disabled={!available} value={order} onChange={event => setOrder(event.target.value)}><option value="descending">Mayor cambio en pp</option><option value="ascending">Menor cambio en pp</option></ResponsiveSelect></div></div></details></header>
+    <TerritorialFilterStatus visible={visible.length} total={rows.length} noMatches={available && !visible.length && !!search.trim()} />
     {!available ? <Alert variant="caveat">Comparabilidad del siguiente nivel no disponible: se requiere pertenencia oficial de mesas a circuitos en ambas elecciones. No se reemplazan ausencias con cero.</Alert> : <>
       <div className={styles.coverage}><p role="status">{rows.filter(row => !row.reason).length} de {rows.length} pares comparables para la agrupación seleccionada</p>
         <ul aria-label="Motivos de exclusión del siguiente nivel">{[...excluded].map(([label, count]) => <li key={label}>{label}: {count}</li>)}</ul>
@@ -52,7 +54,6 @@ export function ComparisonChildren({ outcomes, party }: { outcomes: [OfficialSec
           <ul>{Object.entries(side.unassigned.membership_quarantine_reasons).map(([label, count]) => <li key={`membership-${label}`}>{facetExclusionLabel(label)}: {count}</li>)}{Object.entries(side.unassigned.completeness_quarantine_reasons).map(([label, count]) => <li key={`completeness-${label}`}>{facetExclusionLabel(label)}: {count}</li>)}</ul></div>)}
       </div>
       <TableRegion label="Tabla de cambio por circuito"><table className="data-table"><caption>Cambio por circuito sobre votos positivos incluidos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Estado del par</th><th scope="col">Participación A</th><th scope="col">Participación B</th><th scope="col">Cambio B − A</th><th scope="col">Votos B − A</th></tr></thead><tbody>{visible.map(row => <tr key={row.code}><th scope="row">Circuito {row.code}</th><td>{row.reason ?? "Observaciones completas; límites históricos sin verificar"}</td><td>{format(row.a, "%")}</td><td>{format(row.b, "%")}</td><td>{format(row.change, "pp", true)}</td><td>{row.voteChange === null ? "No disponible" : `${row.voteChange > 0 ? "+" : ""}${formatCount(row.voteChange)} votos`}</td></tr>)}</tbody></table></TableRegion>
-      {!visible.length && <p>No hay coincidencias.</p>}
     </>}
   </section>;
 }
