@@ -8,7 +8,7 @@
  */
 export const MAX_RETURN_DESTINATION_LENGTH = 8192;
 const RETURN_ROUTES = new Set([
-  "/", "/dashboard", "/drilldown", "/compare", "/simulate", "/municipal",
+  "/", "/dashboard", "/drilldown", "/compare", "/simulate", "/municipal", "/onboarding",
   "/fiscalizacion", "/review", "/scenarios", "/evidencia",
 ]);
 

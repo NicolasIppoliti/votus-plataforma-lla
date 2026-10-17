@@ -2,7 +2,7 @@ import { profileServerSpan as profileSpan } from "@/lib/workspace/profile-server
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import { loginDestination } from "@/lib/auth/return-destination";
+import { loginDestination, returnDestination } from "@/lib/auth/return-destination";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";
@@ -58,6 +58,14 @@ export default async function AuthenticatedLayout({
   const selection = await loadWorkspaceSelection();
   if (selection.status === "expired" || selection.status === "revoked") {
     redirect(loginDestination((await headers()).get("x-votus-return-to")));
+  }
+
+  const destination = returnDestination((await headers()).get("x-votus-return-to"));
+  if (selection.status === "selection_required" || selection.status === "stale" ||
+      (selection.status === "active" && selection.onboardingCompleted === false)) {
+    redirect(`/onboarding?${new URLSearchParams({
+      paso: selection.status === "active" ? "alcance" : "organizacion", returnTo: destination,
+    })}`);
   }
 
   // A denied or failed workspace check is "unknown", never a false clean queue.

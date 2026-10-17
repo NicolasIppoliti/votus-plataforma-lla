@@ -1,3 +1,4 @@
+import { prepareOrganization } from "./onboarding";
 import { createClient } from "@supabase/supabase-js";
 import { formatCount } from "../src/lib/format/number";
 import { serializeElectoralContext } from "../src/lib/context/url";
@@ -40,19 +41,7 @@ async function withAuthorizedFiscalWorkspace<T>(page: Page, run: () => Promise<T
   if (fixtureError || typeof fixture?.organization_id !== "string") { const cause = new Error(`failed to set up authorized fiscal fixture: ${fixtureError?.message ?? "invalid response"}`); if (fixture) { const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture }); if (cleanup.error) throw new AggregateError([cause, new Error(cleanup.error.message)], "fiscal fixture setup and cleanup failed"); } throw cause; }
   let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
   try {
-    await page.goto(new URL("/dashboard", baseURL).toString());
-    const trigger = page.getByRole("button", { name: "Abrir navegación" });
-    const mobile = await trigger.isVisible();
-    if (mobile) await trigger.click();
-    const workspaceControls = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
-    const selector = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
-    await expect(selector).toBeVisible();
-    await selector.selectOption(fixture.organization_id);
-    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await workspaceControls.getByRole("button", { name: "Cambiar organización" }).click();
-    const response = await switched;
-    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
-    if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+    await prepareOrganization(page, fixture.organization_id, new URL("/", baseURL).toString());
     outcome = { value: await run() };
   }
   catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }

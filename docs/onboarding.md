@@ -2,8 +2,9 @@
 
 The authenticated `/onboarding` route introduces the active organization, its
 available official data, and the application modules before recording completion.
-This guide describes the route; automatic entry and the account-menu integration
-are delivered in the next onboarding slice.
+Data routes send users without an active organization to organization selection;
+active users with pending completion start at scope. Completion is recorded once
+per user and organization. Return later through **Cuenta → Guía de Votus**.
 
 ## Route
 
@@ -15,7 +16,11 @@ are delivered in the next onboarding slice.
 | Enter | `/onboarding?paso=ingreso` | Record completion for the session's active organization, then navigate to a validated `returnTo` or `/`. |
 
 Without an active organization, requests for later steps show organization
-selection instead. The existing sole-organization bootstrap selects the only
+selection instead. `/onboarding` lives in a separate, session-gated route group,
+outside the layout requiring completion. This avoids circular redirects after
+login and prevents a second organization selector. Login and onboarding preserve
+an allow-listed return path and its original query parameters. Successful
+organization selection and completion revalidate the shared layout. The existing sole-organization bootstrap selects the only
 membership and starts at scope. No available organization is an explicit access
 state, not an empty electoral result.
 

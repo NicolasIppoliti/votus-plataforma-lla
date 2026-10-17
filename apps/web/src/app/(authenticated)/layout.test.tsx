@@ -14,7 +14,8 @@ vi.mock("@/lib/workspace/official-facets", () => ({ createAuthorizedOfficialFace
 vi.mock("@/lib/workspace/official-drilldown-evidence", () => ({ loadAuthorizedOfficialDrilldownEvidence: panorama.evidence }));
 panorama.facets.mockRejectedValue(new Error("unavailable"));
 const navigation = vi.hoisted(() => ({ pathname: "/", query: "" }));
-vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-votus-return-to": "/compare?electionId=2025" }) }));
+const requestContext = vi.hoisted(() => ({ destination: "/compare?electionId=2025" }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-votus-return-to": requestContext.destination }) }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 const supabase = vi.hoisted(() => ({
   auth: {
@@ -461,4 +462,27 @@ it("offers each home workflow once and keeps source qualifications next to its t
   expect(main).not.toContain("Elegir la próxima consulta");
   expect(main).not.toContain("Contexto del workspace");
   expect(main).toContain("Atención operativa");
+});
+
+
+it.each(["selection_required", "stale", "active"])("sends %s workspace needing onboarding to the real route before review reads", async (status) => {
+  workspace.selection.mockResolvedValueOnce({ status, revision: 2,
+    activeOrganizationId: status === "active" ? "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13" : null,
+    organizations: [], total: 0, truncated: false, onboardingCompleted: false });
+  workspace.reviewItems.mockClear();
+  const redirected = new Error("onboarding redirect");
+  vi.mocked(redirect).mockImplementationOnce(() => { throw redirected; });
+  try {
+    await expect(renderLayout("/compare")).rejects.toBe(redirected);
+    const url = new URL(vi.mocked(redirect).mock.calls.at(-1)![0], "https://votus.test");
+    expect(url.pathname).toBe("/onboarding");
+    expect(url.searchParams.get("returnTo")).toBe("/compare?electionId=2025");
+    expect(url.searchParams.get("paso")).toBe(status === "active" ? "alcance" : "organizacion");
+    expect(workspace.reviewItems).not.toHaveBeenCalled();
+  } finally { vi.mocked(redirect).mockReset(); }
+});
+it("keeps the guide reachable from the account menu after completion", async () => {
+  const html = await renderLayout("/review");
+  expect(html).toContain('href="/onboarding?paso=alcance"');
+  expect(html).toContain("Guía de Votus");
 });

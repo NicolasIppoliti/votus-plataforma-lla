@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { writeFile } from "node:fs/promises";
 import { formatCount } from "../src/lib/format/number";
-import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test } from "./onboarded-test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 import { expectMobileFormGeometry } from "./mobile-form-geometry";
 
