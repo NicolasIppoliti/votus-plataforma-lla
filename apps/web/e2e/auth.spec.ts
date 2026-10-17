@@ -53,6 +53,26 @@ async function signInToMonitoredPage(page: Page): Promise<void> {
 const isSessionProbe = (request: { url(): string }): boolean => new URL(request.url()).pathname === "/api/session";
 
 test.describe("no anonymous read path", () => {
+  test("anonymous users can follow privacy from login with security headers", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("link", { name: "Privacidad", exact: true }).click();
+    await expect(page).toHaveURL(/\/privacidad$/);
+    await expect(page).toHaveTitle("Aviso de privacidad · Votus");
+    await expect(page.getByRole("heading", { name: "Aviso de privacidad", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "votus@fragua.dev" })).toHaveAttribute("href", "mailto:votus@fragua.dev");
+    await expect(page.getByText(/30 días/)).toBeVisible();
+    const response = await page.reload();
+    expect(response!.status()).toBe(200);
+    const headers = response!.headers();
+    expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(headers["content-security-policy"]).toMatch(/'nonce-[A-Za-z0-9+/=]+'/);
+    expect(headers["content-security-policy"]).not.toContain("unsafe-eval");
+    expect(headers["x-content-type-options"]).toBe("nosniff");
+    expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+    expect(headers["permissions-policy"]).toContain("camera=()");
+    expect(headers["x-robots-tag"]).toBe("noindex, nofollow");
+    await expect(page.getByRole("heading", { name: "Aviso de privacidad", exact: true })).toBeVisible();
+  });
   test("security baseline covers login, redirects, session API and hydrated authenticated pages", async ({ page, request }) => {
     const assertHeaders = (headers: Record<string, string>) => {
       expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");

@@ -3,6 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import LoginPage from "./page";
 
+it("links to the public privacy notice before sign-in", async () => {
+  const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({}) }) as ReactElement);
+  expect(markup).toContain('href="/privacidad">Privacidad</a>');
+});
+
 it("renders the login page as the public skip destination", async () => {
   const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({}) }) as ReactElement);
 
