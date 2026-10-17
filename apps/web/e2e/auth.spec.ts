@@ -1,4 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
+import { withAuthorizedResultWorkspace } from "./authorized-result-workspace";
 
 /**
  * specs/access-control/spec.md, "No anonymous read path exists": no route
@@ -21,11 +23,10 @@ const TEST_USER_EMAIL = environment.VOTUS_E2E_TEST_USER_EMAIL;
 const TEST_USER_PASSWORD = environment.VOTUS_E2E_TEST_USER_PASSWORD;
 test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOTUS_E2E_STORAGE_STATE) });
 
-// The in-scope content marker rendered only inside `(authenticated)/`
-// routes (see `src/app/(authenticated)/page.tsx`). No anonymous
-// response, cached or otherwise, may ever contain it.
-// The authenticated root is Panorama; its page heading only renders for an authorized session.
-const IN_SCOPE_MARKER = "Panorama";
+// The shared user has no organizations: successful authentication reaches
+// onboarding, whose organization heading is session-gated. Anonymous checks
+// also retain the electoral Panorama marker.
+const IN_SCOPE_MARKER = "Elegí tu organización";
 const PROTECTED_ROUTES = [
   "/",
   "/dashboard",
@@ -45,14 +46,18 @@ async function signInToMonitoredPage(page: Page): Promise<void> {
   await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
   const initialProbe = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/session");
   await page.getByRole("button", { name: "Iniciar sesión" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(url => url.pathname === "/onboarding");
   expect((await initialProbe).status()).toBe(200);
 }
 
 const isSessionProbe = (request: { url(): string }): boolean => new URL(request.url()).pathname === "/api/session";
 
 test.describe("no anonymous read path", () => {
-  test("a supplied simulation survives anonymous sign-in and definitive session expiry", async ({ page, context }) => {
+  test("a supplied simulation survives anonymous sign-in and definitive session expiry", async ({ page, context, browser }) => {
+    const fixtureContext = await browser.newContext({ storageState: environment.VOTUS_E2E_STORAGE_STATE });
+    try {
+    const fixturePage = await fixtureContext.newPage();
+    await withAuthorizedResultWorkspace(fixturePage, environment.VOTUS_E2E_BASE_URL, { distritoCode: "02", seccionCode: "027" }, async () => {
     await page.clock.install();
     const input = { level: "pba_municipal", totalVotes: 10000, blankVotes: 0, annulledVotes: 0,
       unmodeledVotes: 0, unmodeledVoteBreakdown: [], seatsToFill: 9, isProjection: true,
@@ -74,6 +79,8 @@ test.describe("no anonymous read path", () => {
     await expect(page.getByTestId("allocation-result")).toHaveCount(0);
     await login();
     expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
+    });
+    } finally { await fixtureContext.close(); }
   });
   test("an already-open protected page returns to login when its session disappears", async ({ page, context }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -84,7 +91,7 @@ test.describe("no anonymous read path", () => {
     await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
     const initialProbe = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/session");
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(url => url.pathname === "/onboarding");
     await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toBeVisible();
 
     // The client session monitor's first probe establishes that the protected shell is running.
@@ -101,7 +108,7 @@ test.describe("no anonymous read path", () => {
 
     // No click or page navigation: only the bounded lifecycle timer advances.
     await page.clock.fastForward(60_000);
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(url => url.pathname === "/login" && new URL(url.searchParams.get("returnTo") ?? "/", url).pathname === "/onboarding");
     await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toHaveCount(0);
   });
 
@@ -119,13 +126,13 @@ test.describe("no anonymous read path", () => {
         : page.waitForResponse(isSessionProbe).then((response) => response.finished());
       await page.clock.fastForward(60_000);
       await settled;
-      await expect(page).toHaveURL(/\/$/);
+      await expect(page).toHaveURL(url => url.pathname === "/onboarding");
       await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toBeVisible();
     }
 
     state = "expired";
     await page.clock.fastForward(60_000);
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(url => url.pathname === "/login" && new URL(url.searchParams.get("returnTo") ?? "/", url).pathname === "/onboarding");
     await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toHaveCount(0);
   });
 
@@ -133,7 +140,7 @@ test.describe("no anonymous read path", () => {
     await signInToMonitoredPage(page);
     await page.route("**/api/session", (route) => route.fulfill({ status: 200, json: { status: "revoked" } }));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(url => url.pathname === "/login" && new URL(url.searchParams.get("returnTo") ?? "/", url).pathname === "/onboarding");
   });
 
   test("session checks are single-flight, time out safely, and pause while hidden", async ({ page }) => {
@@ -156,7 +163,7 @@ test.describe("no anonymous read path", () => {
     const timedOut = page.waitForEvent("requestfailed", isSessionProbe);
     await page.clock.fastForward(10_000);
     await timedOut;
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(url => url.pathname === "/onboarding");
 
     // The browser visibility API is controlled at its environmental boundary;
     // no production monitor state, tokens or private counters are accessed.
@@ -176,19 +183,35 @@ test.describe("no anonymous read path", () => {
     expect(requests).toBe(2);
     // A response arriving after its request was aborted cannot end the page.
     await delayed!.fulfill({ status: 401, json: { status: "unauthenticated" } });
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(url => url.pathname === "/onboarding");
     await page.evaluate(() => { Reflect.deleteProperty(document, "hidden"); });
   });
 
   test("test_no_anonymous_read_path_including_cached_content", async ({
     page,
     context,
-  }) => {
+    browser,
+  }, testInfo) => {
     // 1. A plain anonymous request never reaches in-scope content: it is
     //    redirected to /login and the response contains no data marker.
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/login/);
+    const anonymousFacts = await page.evaluate(() => {
+      const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+      const markerParents: string[] = [];
+      while (walker.nextNode()) {
+        if (walker.currentNode.textContent?.includes("Panorama")) markerParents.push(walker.currentNode.parentElement?.tagName ?? "unknown");
+      }
+      return { pathname: location.pathname, markerParents, bodyTextHasPanorama: document.body.innerText.includes("Panorama"), tableCount: document.querySelectorAll("table").length };
+    });
+    await writeFile(testInfo.outputPath("e2e-facts-anonymous.json"), JSON.stringify({ ...anonymousFacts, channel: testInfo.project.use.channel, browserVersion: browser.version() }));
     expect(await page.content()).not.toContain(IN_SCOPE_MARKER);
+    // The redirect stream may serialize the public WorkspaceRequiredState title
+    // "Panorama". It must never render the protected page or any electoral table.
+    expect(anonymousFacts.bodyTextHasPanorama).toBe(false);
+    expect(anonymousFacts.markerParents.every(tag => tag === "SCRIPT")).toBe(true);
+    expect(anonymousFacts.tableCount).toBe(0);
+    await expect(page.getByRole("heading", { name: "Panorama", exact: true })).toHaveCount(0);
 
     // 2. Same assertion at the raw HTTP layer (no JS/browser rendering
     //    involved), so a server-rendered or statically-served copy cannot
@@ -199,6 +222,7 @@ test.describe("no anonymous read path", () => {
     expect([301, 302, 307, 308]).toContain(anonymousResponse.status());
     const anonymousBody = await anonymousResponse.text();
     expect(anonymousBody).not.toContain(IN_SCOPE_MARKER);
+    expect(anonymousBody).not.toContain("Panorama");
 
     // 3. The branded login composition remains centered, stacked, touch-sized, and
     //    overflow-free at the two release viewports. Its persistent feedback
@@ -342,7 +366,7 @@ test.describe("no anonymous read path", () => {
     await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
     await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(url => url.pathname === "/onboarding");
     expect(await page.content()).toContain(IN_SCOPE_MARKER);
 
     const sessionCookies = assertLoopbackSessionCookieDelta(
@@ -365,7 +389,7 @@ test.describe("no anonymous read path", () => {
       await page.goto(route);
       const trigger = page.getByRole("button", { name: "Abrir navegación" });
       if (await trigger.isVisible()) await trigger.click();
-      await page.getByRole("group", { name: "Organización y cuenta", exact: true }).locator("summary").press("Enter");
+      await expect(page).toHaveURL(/\/onboarding(?:\?|$)/);
       const signOutControl = page.getByRole("button", {
         name: "Cerrar sesión",
         exact: true,
@@ -405,6 +429,10 @@ test.describe("no anonymous read path", () => {
     await page.goto("/dashboard", { waitUntil: "networkidle" });
     await expect(page).toHaveURL(/\/login/);
     expect(await page.content()).not.toContain(IN_SCOPE_MARKER);
+    // Same electoral-content exclusion as the initial anonymous request.
+    expect(await page.evaluate(() => document.body.innerText.includes("Panorama"))).toBe(false);
+    await expect(page.getByRole("heading", { name: "Panorama", exact: true })).toHaveCount(0);
+    expect(await page.locator("table").count()).toBe(0);
 
     // 8. And the raw HTTP layer again, now with no session cookie at all —
     //    covers any cache keyed purely on the URL rather than on identity.
@@ -412,6 +440,8 @@ test.describe("no anonymous read path", () => {
       maxRedirects: 0,
     });
     expect([301, 302, 307, 308]).toContain(postLogoutResponse.status());
-    expect(await postLogoutResponse.text()).not.toContain(IN_SCOPE_MARKER);
+    const postLogoutBody = await postLogoutResponse.text();
+    expect(postLogoutBody).not.toContain(IN_SCOPE_MARKER);
+    expect(postLogoutBody).not.toContain("Panorama");
   });
 });

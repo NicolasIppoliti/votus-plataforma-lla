@@ -10,7 +10,7 @@ const FISCAL_PATHS = { coverage: "/rest/v1/rpc/fiscalizacion_coverage", result: 
 type FiscalSide = keyof typeof FISCAL_PATHS;
 const PASSTHROUGH_RPC = new Set([
   "bootstrap_workspace_context", "available_organizations", "current_workspace",
-  "switch_workspace_context", "official_facets", "review_items",
+  "switch_workspace_context", "complete_onboarding", "official_facets", "review_items",
 ]);
 
 export function createFiscalStateHandler(

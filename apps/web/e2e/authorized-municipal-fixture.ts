@@ -1,4 +1,5 @@
-import { expect, type Page } from "@playwright/test";
+import { prepareOrganization } from "./onboarding";
+import { type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { scenarioBaseUrl } from "./scenario-ownership";
@@ -16,11 +17,7 @@ export async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () =>
   if (error || typeof data?.organization_id !== "string") throw new Error("failed to set up authorized municipal fixture");
   const fixture = data as WorkspaceFixture;
   try {
-    await page.goto(new URL("/dashboard", baseURL).toString());
-    await page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true }).selectOption(fixture.organization_id);
-    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
-    expect({ ok: (await switched).ok() }).toEqual({ ok: true });
+    await prepareOrganization(page, fixture.organization_id, new URL("/", baseURL).toString());
     return await run();
   } finally {
     const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture });

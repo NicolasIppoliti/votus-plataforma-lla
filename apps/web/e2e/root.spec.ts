@@ -8,6 +8,7 @@ import { withReviewItem } from "./authorized-review-fixture";
 import { writeWorkspaceStateFacts } from "./workspace-state-facts";
 import { withPanoramaResults } from "./panorama-result-fixture";
 import { expectMobileFormGeometry } from "./mobile-form-geometry";
+import { prepareOrganization } from "./onboarding";
 
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
@@ -75,6 +76,7 @@ for (const width of [320, 390]) {
 }
 
 test("authenticated routes share page gutter and title scale", async ({ page }) => {
+  await withReviewItem(page, async () => {
   const routes = ["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/evidencia", "/review", "/fiscalizacion"];
   for (const width of [320, 390, 1440, 1920]) {
     await page.setViewportSize({ width, height: 900 });
@@ -105,6 +107,7 @@ test("authenticated routes share page gutter and title scale", async ({ page }) 
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), route).toBe(true);
     }
   }
+  });
 });
 
 async function expectNoSevereAccessibilityIssues(page: Page) {
@@ -113,12 +116,13 @@ async function expectNoSevereAccessibilityIssues(page: Page) {
     .map(issue => ({ id: issue.id, impact: issue.impact, affectedNodes: issue.nodes.length }))).toEqual([]);
 }
 
-test("without an organization the context bar is a prerequisite note, not a failure (#598)", async ({ page }) => {
+test("without an organization onboarding is a prerequisite, not a context failure (#598)", async ({ page }) => {
   await page.goto("/municipal");
-  const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
-  await expect(bar).toContainText("El contexto electoral se habilita al elegir una organización.");
-  await expect(bar.getByRole("combobox")).toHaveCount(0);
-  await expect(bar).not.toContainText("No se pudo verificar el contexto autorizado.");
+  await expect(page).toHaveURL(url => url.pathname === "/onboarding" && url.searchParams.get("returnTo") === "/municipal");
+  await expect(page.getByRole("heading", { name: "Elegí tu organización", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("No hay organizaciones disponibles.");
+  await expect(page.getByRole("region", { name: "Contexto electoral", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("main")).not.toContainText("No se pudo verificar el contexto autorizado.");
 });
 
 test("electoral context stays labelled and readable at 320px with explicit source opt-in", async ({ page }) => {
@@ -231,6 +235,7 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
 });
 
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
+  await withReviewItem(page, async () => {
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
     await page.goto("/");
@@ -243,6 +248,7 @@ test("the authenticated page renders one navy theme regardless of the system pre
     await expect(page.getByRole("combobox", { name: "Tema", exact: true, includeHidden: true })).toHaveCount(0);
   }
   await expect(page).toHaveURL(/\/$/);
+  });
 });
 
 test("topbar anchors workspace controls while the 218px rail becomes a drawer", async ({ page }) => {
@@ -361,6 +367,10 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       const organization = topbar.getByRole("combobox", { name: "Organización", exact: true });
       const firstId = await organization.inputValue();
       expect(firstId).not.toBe(fixture.organization_id);
+      // Prepare B through onboarding, then restore A before exercising the real
+      // header switch. Neither organization should interrupt the unsent-form proof.
+      await prepareOrganization(page, fixture.organization_id, new URL("/", page.url()).toString());
+      await prepareOrganization(page, firstId, new URL("/", page.url()).toString());
       await expect(sidebar).toContainText("Organización activa: E2E Authorized Review Browser");
       for (const reader of [topbar, attention]) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
       await organization.selectOption(fixture.organization_id);
@@ -501,13 +511,14 @@ test("account controls live in the topbar and mobile drawer and preserve keyboar
   await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
   await page.getByLabel("Contraseña").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
   await page.getByRole("button", { name: "Iniciar sesión" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(url => url.pathname === "/onboarding");
+  await withReviewItem(page, async () => {
   const sidebar = page.locator(".app-shell > aside.situation-sidebar");
   const topbar = page.getByRole("banner");
   const controls = topbar.getByRole("group", { name: "Organización y cuenta", exact: true });
   await expect(controls).toHaveCount(1);
-  await expect(controls.getByRole("status").filter({ hasText: /^Seleccioná una organización para continuar\.$/ })).toBeVisible();
-  await expect(controls.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+  await expect(controls).toContainText("Organización activa: E2E Authorized Review Browser");
+  await expect(topbar.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
   await expect(sidebar.getByRole("group", { name: "Organización y cuenta", exact: true, includeHidden: true })).toHaveCount(0);
   const account = controls.locator("summary").filter({ hasText: /^Cuenta$/ });
   await expect(account).toBeVisible();
@@ -516,10 +527,24 @@ test("account controls live in the topbar and mobile drawer and preserve keyboar
   const signOut = controls.getByRole("button", { name: "Cerrar sesión", exact: true });
   await expect(signOut).toBeVisible();
   await page.keyboard.press("Tab");
+  const guide = controls.getByRole("link", { name: "Guía de Votus", exact: true });
+  await expect(guide).toBeFocused();
+  await expect(guide).toHaveAttribute("href", "/onboarding?paso=alcance");
+  await page.keyboard.press("Tab");
   await expect(signOut).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(signOut).toBeHidden();
   await expect(account).toBeFocused();
+  const activeOrganizationId = await topbar.getByRole("combobox", { name: "Organización", exact: true }).inputValue();
+  await account.press("Enter");
+  await guide.click();
+  await expect(page).toHaveURL(url => url.pathname === "/onboarding" && url.searchParams.get("paso") === "alcance");
+  await expect(page.getByRole("heading", { name: "Tu alcance de trabajo", exact: true })).toBeVisible();
+  const revisited = await page.request.get("/api/workspace");
+  expect(revisited.ok()).toBe(true);
+  expect(await revisited.json()).toMatchObject({ status: "active", activeOrganizationId, onboardingCompleted: true });
+  await page.goto("/");
+  await expect(page).toHaveURL(url => url.pathname === "/");
 
   await page.setViewportSize({ width: 320, height: 568 });
   const trigger = page.getByRole("button", { name: "Abrir navegación" });
@@ -528,13 +553,15 @@ test("account controls live in the topbar and mobile drawer and preserve keyboar
   const close = drawer.getByRole("button", { name: "Cerrar navegación" });
   const mobileControls = drawer.getByRole("group", { name: "Organización y cuenta", exact: true });
   await expect(mobileControls).toHaveCount(1);
-  await expect(mobileControls.getByRole("status").filter({ hasText: /^Seleccioná una organización para continuar\.$/ })).toBeVisible();
-  await expect(mobileControls.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+  await expect(mobileControls).toContainText("Organización activa: E2E Authorized Review Browser");
+  await expect(drawer.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
   const mobileAccount = mobileControls.locator("summary").filter({ hasText: /^Cuenta$/ });
   await expect(close).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(mobileAccount).toBeFocused();
   await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await expect(mobileControls.getByRole("link", { name: "Guía de Votus", exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
   const mobileSignOut = mobileControls.getByRole("button", { name: "Cerrar sesión", exact: true });
   await expect(mobileSignOut).toBeFocused();
@@ -553,6 +580,7 @@ test("account controls live in the topbar and mobile drawer and preserve keyboar
   await mobileAccount.press("Enter");
   await mobileSignOut.click();
   await expect(page).toHaveURL(/\/login$/);
+  });
 });
 
 for (const [status, httpStatus, message] of [
@@ -727,6 +755,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       await anonymousContext.dispose();
     }
 
+    await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     await expect(page).toHaveURL(/\/$/);
@@ -869,19 +898,13 @@ test.describe("the production root preserves its authentication boundary", () =>
     await page.setViewportSize({ width: 320, height: 844 });
     await expect(topbar).toBeVisible();
     await expect(topbar).not.toContainText("Organización sin verificar");
-    await expect(
-      topbar.getByRole("status").filter({
-        hasText: /^Seleccioná una organización para ver el estado de revisión\.$/,
-      }),
-    ).toBeVisible();
+    await expect(topbar.getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)", exact: true })).toBeVisible();
     await expect(topbar).not.toContainText("No se pudo verificar el estado de revisión.");
     await expect(topbar).not.toContainText("Sin elementos pendientes");
-    await expect(topbar).not.toContainText("elemento(s) de revisión pendiente(s)");
     await drawerTrigger.click();
     const footer = drawer.getByRole("group", { name: "Organización y cuenta" });
-    await expect(footer).toContainText("Sin organización");
-    await expect(footer.getByRole("status").filter({ hasText: "Seleccioná una organización para continuar." })).toBeVisible();
-    await expect(footer.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+    await expect(footer).toContainText("Organización activa: E2E Authorized Review Browser");
+    await expect(drawer.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
     await expect(
       topbar.getByRole("combobox", { name: "Organización" }),
     ).toHaveCount(0);
@@ -963,9 +986,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(desktopNavigation.getByRole("link", { name: "Evidencia", exact: true })).toHaveAttribute("href", "/evidencia");
     await expect(desktopNavigation.getByRole("link", { name: "Revisión de datos", exact: true })).toHaveAttribute("href", "/review");
 
-    // The no-selection shell above intentionally has no Panorama data content.
-    await expect(page.getByRole("main").getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
-    await withReviewItem(page, async () => {
+    await expect(page.getByRole("main").getByRole("heading", { name: ROOT_CONTENT, exact: true })).toBeVisible();
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
     const explorationHref = await officialRoutes.getByRole("link", { name: "Explorar resultados", exact: true }).getAttribute("href");
@@ -977,7 +998,6 @@ test.describe("the production root preserves its authentication boundary", () =>
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
     await expect(separatedRoutes.getByRole("link", { name: "Resultados municipales" })).toHaveAttribute("href", "/municipal");
-    });
     await page
       .getByRole("link", { name: "Ir al contenido principal" })
       .press("Enter");
@@ -989,6 +1009,7 @@ test.describe("the production root preserves its authentication boundary", () =>
           document.documentElement.clientWidth,
       ),
     ).toBe(true);
+    });
   });
 });
 

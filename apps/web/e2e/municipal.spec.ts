@@ -28,7 +28,7 @@ interface WorkspaceFixture { organization_id: string; user_id: string; distrito_
 
 // #467 lives in the existing municipal scenario so the release gate uses its
 // isolated server configuration and owned result fixture. Requires #425 / #518.
-test("first-run: a fresh sole-organization user reaches Rosales results in three clicks", async ({ browser }) => {
+test("first-run: a sole-organization user completes scope and guide before reaching Rosales results", async ({ browser }) => {
   await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
     const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
     const nonce = randomUUID();
@@ -53,9 +53,23 @@ test("first-run: a fresh sole-organization user reaches Rosales results in three
       await page.goto("/login");
       await page.getByLabel("Correo electrónico").fill(email);
       await page.getByLabel("Contraseña").fill(password);
-      // Click 1: real login, never seed a session or switch workspace by RPC.
+      // Real login, never seed a session or switch workspace by RPC.
       await page.getByRole("button", { name: "Iniciar sesión", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Tu alcance de trabajo", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Elegí tu organización", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("main").getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("main")).toContainText("CONCEJALES");
+      await expect(page.getByRole("main")).toContainText("Coronel de Marina L. Rosales");
+      await page.getByRole("link", { name: "Continuar a la guía", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Una guía para cada tarea", exact: true })).toBeVisible();
+      await page.getByRole("link", { name: "Continuar", exact: true }).click();
+      await page.getByRole("button", { name: "Ingresar a Votus", exact: true }).click();
       await expect(page).toHaveURL(new URL("/", baseURL).toString());
+      await page.reload();
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
+      const completion = await page.request.get(new URL("/api/workspace", baseURL).toString());
+      expect(completion.ok()).toBe(true);
+      expect(await completion.json()).toMatchObject({ status: "active", activeOrganizationId: fixture.organization_id, onboardingCompleted: true });
       const main = page.getByRole("main");
       await expect(main.getByRole("heading", { level: 1, name: "Panorama", exact: true })).toBeVisible();
       const organization = page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true });

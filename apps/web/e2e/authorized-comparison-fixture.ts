@@ -1,4 +1,5 @@
-import { expect, type Page } from "@playwright/test";
+import { prepareOrganization } from "./onboarding";
+import { type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { resultScenarioIdentity, scenarioBaseUrl, type ResultScenarioIdentity } from "./scenario-ownership";
@@ -30,9 +31,7 @@ export async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (rev
   fixture = extension.data as WorkspaceFixture;
   let outcome: { value: T } | { error: unknown }; let cleanupError: Error | null = null;
   try {
-    await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true }); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
-    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched;
-    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
+    await prepareOrganization(page, fixture.organization_id, new URL("/", baseURL).toString());
     const revokeAuthorization = async (): Promise<void> => { const revoked = await admin.rpc("e2e_revoke_authorized_fiscal_fixture", { p_fixture: fixture }); if (revoked.error || revoked.data?.revoked !== true || revoked.data?.revoked_scope_count !== 2) throw new Error("failed to revoke authorized comparison fixture"); };
     outcome = { value: await run(revokeAuthorization) };
   } catch (caught) { outcome = { error: caught }; }

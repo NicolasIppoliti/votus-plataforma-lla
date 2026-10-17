@@ -285,6 +285,10 @@ for (const pair of pairs) {
         prototype.on("response", response => { if (!response.ok()) failures.push(`${response.status()} ${response.url()}`); });
         await prototype.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle" });
         await expect(prototype.locator("h1").first()).toBeVisible();
+        if (failures.length) await writeFile(test.info().outputPath("e2e-facts-prototype-responses.json"), JSON.stringify(failures.map(failure => {
+          const response = failure.match(/^(\d{3}) (http:\/\/127\.0\.0\.1:\d+\/.*)$/);
+          return response ? { status: Number(response[1]), pathname: new URL(response[2]!).pathname } : { pageError: true };
+        })));
         expect(failures).toEqual([]);
         measurements.push(await capture(prototype, `prototype-${pair.name}-${width}.png`));
         await production(page, pair.route, async () => {

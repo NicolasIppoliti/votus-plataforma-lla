@@ -144,6 +144,7 @@ export default class ReleaseGateReporter implements Reporter {
 	private attempts: PlaywrightAttempt[] = [];
 	private counts = { failed: 0, timedOut: 0, skipped: 0, interrupted: 0 };
 	private unmappableAttempts = 0;
+	private outputDirectory: string | undefined;
 	private readonly receiptPath: string | undefined;
 	private readonly selection: GateReceiptSelection;
 	private readonly writeReceipt: (path: string, content: string) => void;
@@ -159,7 +160,7 @@ export default class ReleaseGateReporter implements Reporter {
 	}
 
 	onBegin(config: FullConfig, suite: Suite): void {
-		void config;
+		this.outputDirectory = config.projects?.[0]?.outputDir;
 		this.results.clear();
 		this.identities.clear();
 		this.attempts = [];
@@ -315,6 +316,18 @@ export default class ReleaseGateReporter implements Reporter {
 			return { status: "failed" };
 		} finally {
 			this.writeDiagnostics(report);
+			// Bounded, value-free counts survive owned gate cleanup for local handoff.
+			// Never include titles, errors, URLs, session material or result payloads.
+			if (this.outputDirectory) {
+				try {
+					writeFileSync(path.join(this.outputDirectory, "e2e-facts-test-counts.json"), JSON.stringify(
+						this.selection.selected.map(spec => ({ spec, counts: Object.fromEntries(
+							["passed", "failed", "timedOut", "skipped", "interrupted"].map(status => [status,
+								[...this.results.values()].filter(item => item.spec === spec && item.status === status).length]),
+						) })),
+					));
+				} catch { /* Diagnostics cannot replace the canonical receipt outcome. */ }
+			}
 		}
 	}
 }

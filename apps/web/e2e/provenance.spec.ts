@@ -1,3 +1,4 @@
+import { prepareOrganization, finishFixtureOnboarding } from "./onboarding";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -510,7 +511,8 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
           await page.getByLabel("Correo electrónico").fill(email);
           await page.getByLabel("Contraseña").fill(password);
           await page.getByRole("button", { name: "Iniciar sesión" }).click();
-          await expect(page).toHaveURL(new URL("/", baseURL).toString());
+          await expect(page.getByRole("heading", { name: "Tu alcance de trabajo", exact: true })).toBeVisible();
+          await finishFixtureOnboarding(page, new URL("/", baseURL).toString());
           const session = await page.request.get(new URL("/api/session", baseURL).toString());
           const sessionBody: unknown = await session.json();
           // Failure-only facts (HTTP status and session status only): the release gate redacts Playwright output.
@@ -522,19 +524,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
           }
           expect(sessionBody).toEqual({ status: "active" });
         } else {
-        await page.goto(new URL("/dashboard", baseURL).toString());
-        const trigger = page.getByRole("button", { name: "Abrir navegación" });
-        const mobile = await trigger.isVisible();
-        if (mobile) await trigger.click();
-        const workspaceControls = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
-        const selector = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
-        await expect(selector).toBeVisible();
-        await selector.selectOption(fixture.organization_id);
-        const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-        await workspaceControls.getByRole("button", { name: "Cambiar organización" }).click();
-        const response = await switched;
-        expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
-        if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+          await prepareOrganization(page, fixture.organization_id, new URL("/", baseURL).toString());
         }
         outcome = { value: await run() };
       } catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
