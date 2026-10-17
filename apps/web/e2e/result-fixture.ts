@@ -177,6 +177,40 @@ export function comparisonFixture(spec: DataScenarioSpec, variant?: ComparisonFi
   };
   return { identity, seed };
 }
+// Ten fully qualified mesas, one per circuit, in each election.
+export function territorialFilterFixture(spec: DataScenarioSpec) {
+  const identity = resultScenarioIdentity(spec, "filters"), party = identity.comparisonParty!;
+  const jurisdictions = identity.jurisdictionIds.map((id, index) => ({ id,
+    distrito_code: identity.distritoCode, seccion_code: identity.seccionCode,
+    distrito_name: "Distrito sintético", seccion_name: "Sección sintética",
+    circuito_code: String(index + 1).padStart(5, "0"), circuito_name: `Circuito ${String(index + 1).padStart(5, "0")}`,
+    establecimiento_code: "E1", establecimiento_name: "Establecimiento sintético", mesa_code: index + 1,
+  }));
+  const mesaRows = identity.electionIds.flatMap((election_id, side) => jurisdictions.map((j, index) => ({
+    election_id, archive_entry_id: identity.archiveEntryIds[side]!, distrito_code: j.distrito_code,
+    seccion_code: j.seccion_code, mesa_code: j.mesa_code, source_row_index: index,
+  })));
+  const seed: ResultFixtureSeed = {
+    category: { id: identity.categoryId, name: identity.categoryName }, jurisdictions,
+    elections: identity.electionIds.map((id, side) => ({ id, year: identity.electionYears[side]!, round: identity.electionRounds[side]! })),
+    archiveEntries: archiveEntries(identity.archiveEntryIds, -1),
+    partyCanonical: [{ id: party.canonicalPartyId, display_name: party.displayName }],
+    partyMappings: identity.electionYears.map((year, side) => ({ id: party.mappingIds[side]!, year,
+      jurisdiction: party.jurisdiction, category: identity.categoryName, list_id: party.listIds[side]!, canonical_party_id: party.canonicalPartyId, source: spec })),
+    rows: identity.electionIds.flatMap((election_id, side) => jurisdictions.map((j, index) => ({
+      election_id, jurisdiction_id: j.id, category_id: identity.categoryId, granularity: "mesa", list_id: party.listIds[side]!,
+      votes: 100 + index + side, archive_entry_id: identity.archiveEntryIds[side]!, source_row_index: index, source_kind: "official",
+    }))),
+    officialExpectedMesas: mesaRows.map(row => ({ ...row, mesa_tipo: "NATIVOS", electores: 200 })),
+    // Unlike catalogue and membership, count-status rows have no source_row_index column.
+    officialMesaCountStatuses: mesaRows.map(row => ({ election_id: row.election_id, archive_entry_id: row.archive_entry_id,
+      distrito_code: row.distrito_code, seccion_code: row.seccion_code, mesa_code: row.mesa_code, category_id: identity.categoryId,
+      circuito_code: String(row.mesa_code).padStart(5, "0"), count_status: "counted" })),
+    officialMesaCircuitMembership: mesaRows.map(row => ({ ...row, circuito_code: String(row.mesa_code).padStart(5, "0"), circuito_raw: String(row.mesa_code) })),
+  };
+  return { identity, seed };
+}
+
 export function coverageFixture(spec: DataScenarioSpec) {
   const identity = resultScenarioIdentity(spec);
   if (identity.scenario !== "fiscalizacion" || identity.jurisdictionIds.length !== 2 ||
@@ -252,14 +286,14 @@ export function assertResultFixtureOwnership(
     ...(seed.officialExpectedMesas ?? []).map((row) => `official_expected_mesa:${row["election_id"]}|${row["distrito_code"]}|${row["seccion_code"]}|${row["mesa_code"]}`),
     ...(seed.officialMesaCountStatuses ?? []).map((row) => `official_mesa_count_status:${row["election_id"]}|${row["category_id"]}|${row["distrito_code"]}|${row["seccion_code"]}|${row["mesa_code"]}`),
   ];
-  if (hasCompleteness && (variant !== undefined ||
-      JSON.stringify(completenessKeys.sort()) !== JSON.stringify(planCompletenessNaturalKeys(spec).sort()) ||
-      [...seed.officialExpectedMesas ?? [], ...seed.officialMesaCountStatuses ?? []].some((row) => row["archive_entry_id"] !== identity.archiveEntryIds[0])))
+  if (hasCompleteness && (variant !== undefined && variant !== "filters" ||
+      JSON.stringify(completenessKeys.sort()) !== JSON.stringify(planCompletenessNaturalKeys(spec, variant).sort()) ||
+      [...seed.officialExpectedMesas ?? [], ...seed.officialMesaCountStatuses ?? []].some((row) => row["archive_entry_id"] !== identity.archiveEntryIds[identity.electionIds.indexOf(String(row["election_id"]))])))
     throw new Error(`completeness seed does not exactly match owned identity: ${spec}`);
   if (seed.officialMesaCircuitMembership) {
     const keys = seed.officialMesaCircuitMembership.map(row => `official_mesa_circuit_membership:${row["election_id"]}|${row["distrito_code"]}|${row["seccion_code"]}|${row["mesa_code"]}`);
-    if (!hasCompleteness || variant !== undefined || JSON.stringify(keys.sort()) !== JSON.stringify(planCircuitMembershipNaturalKeys(spec).sort()) ||
-      seed.officialMesaCircuitMembership.some(row => row["archive_entry_id"] !== identity.archiveEntryIds[0]))
+    if (!hasCompleteness || variant !== undefined && variant !== "filters" || JSON.stringify(keys.sort()) !== JSON.stringify(planCircuitMembershipNaturalKeys(spec, variant).sort()) ||
+      seed.officialMesaCircuitMembership.some(row => row["archive_entry_id"] !== identity.archiveEntryIds[identity.electionIds.indexOf(String(row["election_id"]))]))
       throw new Error(`circuit membership seed does not exactly match owned identity: ${spec}`);
   }
   const actualCleanup = [
@@ -298,6 +332,7 @@ function identityCompletenessArchive(spec: DataScenarioSpec): string {
 export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultFixtureSeed,
   run: () => Promise<T>, variant?: ComparisonFixtureVariant): Promise<T> {
   const archiveEntryIds = assertResultFixtureOwnership(spec, seed, variant);
+  const completenessArchives = variant === "filters" ? resultScenarioIdentity(spec, variant).archiveEntryIds : (seed.officialExpectedMesas || seed.officialMesaCountStatuses || seed.officialMesaCircuitMembership ? [identityCompletenessArchive(spec)] : []);
   const environment = assertE2eEnvironment(process.env);
   const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL,
     environment.SUPABASE_SERVICE_ROLE_KEY);
@@ -331,11 +366,11 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
     } catch (error) { cleanupErrors.push(error); }
   };
       if (seed.officialMesaCircuitMembership)
-        await cleanup("official mesa circuit membership", admin.from("official_mesa_circuit_membership").delete().eq("archive_entry_id", identityCompletenessArchive(spec)));
+        await cleanup("official mesa circuit membership", admin.from("official_mesa_circuit_membership").delete().in("archive_entry_id", completenessArchives));
       if (seed.officialMesaCountStatuses)
-        await cleanup("official mesa count statuses", admin.from("official_mesa_count_status").delete().eq("archive_entry_id", identityCompletenessArchive(spec)));
+        await cleanup("official mesa count statuses", admin.from("official_mesa_count_status").delete().in("archive_entry_id", completenessArchives));
       if (seed.officialExpectedMesas)
-        await cleanup("official expected mesas", admin.from("official_expected_mesa").delete().eq("archive_entry_id", identityCompletenessArchive(spec)));
+        await cleanup("official expected mesas", admin.from("official_expected_mesa").delete().in("archive_entry_id", completenessArchives));
       await cleanup("result rows", admin.from("result_row").delete().in("archive_entry_id", archiveEntryIds));
       if (seed.listIdentities)
         await cleanup("list identities", admin.from("list_identity").delete().in("id", seed.listIdentities.map((row) => String(row["id"]))));

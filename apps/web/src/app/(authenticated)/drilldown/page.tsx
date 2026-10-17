@@ -242,7 +242,10 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <details className={styles.readingNote}><summary>Antes de interpretar</summary><p>Confirmá la fuente oficial y la categoría {result.categoryName}. Verificá la comparabilidad temporal de categorías, agrupaciones y límites territoriales antes de comparar elecciones.</p></details>
         </section>
       </section>
-      <TerritorialBreakdown key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()} context={`${result.categoryName} · ${result.electionYear} ${result.electionRound} · fuente oficial`}>
+      <TerritorialBreakdown key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()} context={`${result.categoryName} · ${result.electionYear} ${result.electionRound} · fuente oficial`}
+        total={selection.requestedLevel === "seccion" && evidence.circuitOutcomes
+          ? evidence.circuitOutcomes.status === "ok" ? evidence.circuitOutcomes.circuits.length : 0
+          : selection.requestedLevel === "circuito" ? facets.establecimientos.length : selection.requestedLevel === "establecimiento" ? facets.mesas.length : 0}>
         {selection.requestedLevel === "seccion" && evidence.circuitOutcomes
           ? <CircuitOutcomes outcomes={evidence.circuitOutcomes} circuitNames={Object.fromEntries(facets.circuitos.filter(child => child.nameStatus === "present" && child.name).map(child => [child.code, child.name!]))} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} view="table" />
           : <TableRegion label="Resultados de los territorios hijos"><Table className="data-table"><TableCaption>Resultados de los territorios hijos</TableCaption><TableHeader><TableRow><TableHead scope="col">Territorio</TableHead><TableHead scope="col">Resultado</TableHead></TableRow></TableHeader><TableBody>

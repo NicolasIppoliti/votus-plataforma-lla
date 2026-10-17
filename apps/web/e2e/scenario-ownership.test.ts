@@ -20,10 +20,29 @@ import { runOwnedServerCleanup } from "../scripts/e2e-gate-runtime";
 import {
   assertResultFixtureOwnership,
   comparisonFixture,
+  territorialFilterFixture,
   sourceIsolationFixture,
 } from "./result-fixture";
 
 describe("parallel scenario ownership", () => {
+  it("owns ten mesa lineages and election-bound completeness/membership archives for filter interactions", () => {
+    const spec = "e2e/comparison.spec.ts", { identity, seed } = territorialFilterFixture(spec);
+    expect(identity.jurisdictionIds).toHaveLength(10);
+    expect(seed.rows).toHaveLength(20);
+    expect(seed.officialMesaCountStatuses!.every(row => !("source_row_index" in row))).toBe(true);
+    expect(seed.officialExpectedMesas!.every(row => "source_row_index" in row)).toBe(true);
+    expect(seed.officialMesaCircuitMembership!.every(row => "source_row_index" in row)).toBe(true);
+    expect(planCompletenessNaturalKeys(spec, "filters")).toHaveLength(40);
+    expect(planCircuitMembershipNaturalKeys(spec, "filters")).toHaveLength(20);
+    expect(assertResultFixtureOwnership(spec, seed, "filters").sort()).toEqual([...identity.archiveEntryIds].sort());
+    expect(identity.archiveEntryIds.every(archive => !resultScenarioIdentity(spec).archiveEntryIds.includes(archive))).toBe(true);
+    const wrongArchive = structuredClone(seed);
+    wrongArchive.officialMesaCircuitMembership![0]!.archive_entry_id = identity.archiveEntryIds[1]!;
+    expect(() => assertResultFixtureOwnership(spec, wrongArchive, "filters")).toThrow("circuit membership seed does not exactly match owned identity");
+    const missingMesa = structuredClone(seed);
+    missingMesa.officialExpectedMesas!.pop();
+    expect(() => assertResultFixtureOwnership(spec, missingMesa, "filters")).toThrow("completeness seed does not exactly match owned identity");
+  });
   it("owns three circuit membership keys only for provenance", () => {
     const spec = "e2e/provenance.spec.ts";
     const i = resultScenarioIdentity(spec);

@@ -94,7 +94,7 @@ function deterministicUuid(name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-export type ComparisonFixtureVariant = "spatial" | "paso";
+export type ComparisonFixtureVariant = "spatial" | "paso" | "filters";
 export const PASO_NAMED_LISTS = ["132-3008", "132-3007", "135-3016"];
 export function pasoOwnedParty(listId: string) { return `e2e-provenance-paso-${listId.split("-")[0]}`; }
 export function pasoOwnedMappingId(listId: string) { return deterministicUuid(`provenance-paso-mapping-${listId}`); }
@@ -103,7 +103,7 @@ export function pasoOwnedListId(listId: string) { return deterministicUuid(`prov
 export function resultScenarioIdentity(spec: string, variant?: ComparisonFixtureVariant): ResultScenarioIdentity {
   const scenario = SCENARIO_BY_SPEC[spec as DataScenarioSpec];
   if (!scenario) throw new Error(`unknown data scenario: ${spec}`);
-  if (variant !== undefined && !(variant === "spatial" && scenario === "comparison" || variant === "paso" && scenario === "provenance")) throw new Error("unsupported comparison fixture variant");
+  if (variant !== undefined && !((variant === "spatial" || variant === "filters") && scenario === "comparison" || variant === "paso" && scenario === "provenance")) throw new Error("unsupported comparison fixture variant");
   const prefix = `e2e-${scenario}${variant ? `-${variant}` : ""}`;
   const electionIds =
     scenario === "comparison"
@@ -149,7 +149,7 @@ export function resultScenarioIdentity(spec: string, variant?: ComparisonFixture
     mappingIds: electionYears.map((year) => deterministicUuid(`${prefix}-other-party-mapping-${year}`)),
   } : undefined;
   const comparisonLeftOnlySection =
-    scenario === "comparison"
+    scenario === "comparison" && variant !== "filters"
       ? {
           jurisdictionId: deterministicUuid(`${prefix}-left-only-jurisdiction`),
           distritoCode: variant === "spatial" ? "02" : "84",
@@ -158,6 +158,7 @@ export function resultScenarioIdentity(spec: string, variant?: ComparisonFixture
         }
       : undefined;
   const jurisdictionIds =
+    variant === "filters" ? Array.from({ length: 10 }, (_, index) => index === 0 ? jurisdictionId : deterministicUuid(`${prefix}-jurisdiction-${index + 1}`)) :
     scenario === "fiscalizacion"
       ? [jurisdictionId, deterministicUuid(`${prefix}-jurisdiction-uncovered`)]
       : comparisonLeftOnlySection
@@ -206,7 +207,14 @@ function plannedResultArchiveEntryIds(identity: ResultScenarioIdentity): string[
     : identity.archiveEntryIds;
 }
 
-export function planCompletenessNaturalKeys(spec: string): string[] {
+export function planCompletenessNaturalKeys(spec: string, variant?: ComparisonFixtureVariant): string[] {
+  if (variant === "filters") {
+    const i = resultScenarioIdentity(spec, variant);
+    return i.electionIds.flatMap(election => Array.from({ length: 10 }, (_, index) => [
+      `official_expected_mesa:${election}|${i.distritoCode}|${i.seccionCode}|${index + 1}`,
+      `official_mesa_count_status:${election}|${i.categoryId}|${i.distritoCode}|${i.seccionCode}|${index + 1}`,
+    ]).flat());
+  }
   if (spec !== "e2e/provenance.spec.ts") throw new Error("unsupported completeness scenario");
   const identity = resultScenarioIdentity(spec);
   const section = `${identity.distritoCode}|${identity.seccionCode}`;
@@ -216,9 +224,10 @@ export function planCompletenessNaturalKeys(spec: string): string[] {
   ];
 }
 
-export function planCircuitMembershipNaturalKeys(spec: string): string[] {
-  planCompletenessNaturalKeys(spec);
-  const i = resultScenarioIdentity(spec);
+export function planCircuitMembershipNaturalKeys(spec: string, variant?: ComparisonFixtureVariant): string[] {
+  planCompletenessNaturalKeys(spec, variant);
+  const i = resultScenarioIdentity(spec, variant);
+  if (variant === "filters") return i.electionIds.flatMap(election => Array.from({ length: 10 }, (_, index) => `official_mesa_circuit_membership:${election}|${i.distritoCode}|${i.seccionCode}|${index + 1}`));
   return [1, 2, 3].map(m => `official_mesa_circuit_membership:${i.electionIds[0]}|${i.distritoCode}|${i.seccionCode}|${m}`);
 }
 
@@ -230,6 +239,16 @@ export function planCompletenessCleanup(spec: string): string[] {
 
 export function planResultNaturalKeys(spec: string, variant?: ComparisonFixtureVariant): string[] {
   const identity = resultScenarioIdentity(spec, variant);
+  if (variant === "filters") return [
+    `category:${identity.categoryName}`,
+    ...identity.jurisdictionIds.map((_, index) => `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|${String(index + 1).padStart(5, "0")}|E1|${index + 1}`),
+    ...identity.electionYears.map((year, index) => `election:${year}|${identity.electionRounds[index]}`),
+    ...identity.electionIds.flatMap((electionId, side) => identity.jurisdictionIds.map(jurisdictionId => resultNaturalKey({
+      archiveEntryId: identity.archiveEntryIds[side]!, electionId, jurisdictionId, categoryId: identity.categoryId,
+      listId: identity.comparisonParty!.listIds[side]!, sourceKind: "official",
+    }))),
+    ...planScenarioPartyNaturalKeys(spec, variant),
+  ];
   if (variant === "paso") return [
     `category:${identity.categoryName}`, `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|null|null|null`, `election:2023|paso`,
     ...pasoInternasFixture.section_lists.map((list) => resultNaturalKey({ archiveEntryId: identity.archiveEntryIds[0]!, electionId: identity.electionIds[0]!, jurisdictionId: identity.jurisdictionId, categoryId: identity.categoryId, listId: list.list_id, sourceKind: "official" })),

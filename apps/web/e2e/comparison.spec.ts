@@ -4,7 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { writeWorkspaceStateFacts } from "./workspace-state-facts";
 import { alignedOccupiedGeometry, type Raster } from "./map-raster";
-import { comparisonFixture, withResultFixture } from "./result-fixture";
+import { assertTerritorialFilter } from "./assert-territorial-filter";
+import { comparisonFixture, territorialFilterFixture, withResultFixture } from "./result-fixture";
 import { withAuthorizedComparisonWorkspace } from "./authorized-comparison-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
 const environment = assertE2eEnvironment(process.env), SPEC = "e2e/comparison.spec.ts";
@@ -169,6 +170,38 @@ test.describe("authorized official comparison", () => {
   function expectSameViewport(left: { width: number; height: number }, right: { width: number; height: number }, phase: string) {
     expect([right.width, right.height], `${phase}: map viewport resized`).toEqual([left.width, left.height]);
   }
+  test("announces navigator and comparison filter results without moving keyboard focus", async ({ page }) => {
+    const fixture = territorialFilterFixture(SPEC), i = fixture.identity;
+    let stage = "fixture setup";
+    try {
+    await withResultFixture(SPEC, fixture.seed, async () => withAuthorizedComparisonWorkspace(page, async () => {
+      stage = "navigator";
+      const scope = new URLSearchParams({ electionId: i.electionIds[0]!, categoryId: i.categoryId,
+        distritoCode: i.distritoCode, seccionCode: i.seccionCode, level: "seccion" });
+      await page.goto(`${baseURL}/drilldown?${scope}`);
+      const navigator = page.getByRole("region", { name: "Navegador territorial", exact: true });
+      await expect(navigator.getByRole("button", { name: /^Abrir / })).toHaveCount(10);
+      await expect(assertTerritorialFilter(navigator, navigator.getByRole("searchbox"), "00001", 10, 1)).resolves.toBeUndefined();
+      stage = "comparison";
+      scope.delete("level");
+      scope.set("bElectionId", i.electionIds[1]!); scope.set("bCategoryId", i.categoryId);
+      await page.goto(`${baseURL}/compare?${scope}`);
+      const children = page.getByRole("region", { name: "Cambio por territorio", exact: true });
+      await expect(children.getByRole("searchbox")).toBeEnabled();
+      const coverage = children.getByRole("status").filter({ hasText: "pares comparables" });
+      await expect(coverage).toHaveText("10 de 10 pares comparables para la agrupación seleccionada");
+      await expect(assertTerritorialFilter(children, children.getByRole("searchbox"), "00001", 10, 1)).resolves.toBeUndefined();
+      await expect(coverage).toHaveText("10 de 10 pares comparables para la agrupación seleccionada");
+    }, i), "filters");
+    } catch (error) {
+      const errors = error instanceof AggregateError ? error.errors : [error];
+      await writeFile(test.info().outputPath("e2e-facts-territorial-filter.json"), JSON.stringify({ stage,
+        failures: errors.map(value => value instanceof Error ? value.message.match(/failed to seed [a-z_]+|failed to [a-z ]+fixture|fixture seed does not exactly match owned identity/)?.[0] ?? "assertion or other failure" : "non-error"),
+      }));
+      throw error;
+    }
+  });
+
   test("retains the first map camera on late activation, synchronizes both directions and focuses exact results", async ({ page }) => {
     const spatial = comparisonFixture(SPEC, "spatial");
     await withResultFixture(SPEC, spatial.seed, async () => withAuthorizedComparisonWorkspace(page, async () => {
@@ -432,6 +465,12 @@ test.describe("authorized official comparison", () => {
       const inspector = workbench.getByRole("complementary", { name: "Detalle de comparación", exact: true });
       await expect(inspector.getByRole("region", { name: "Navegador territorial", exact: true })).toBeVisible();
       await expect(main.getByRole("heading", { name: "Cambio por territorio", exact: true })).toBeVisible();
+      const childRegion = main.getByRole("region", { name: "Cambio por territorio", exact: true });
+      const filterStatus = childRegion.getByRole("status").filter({ hasText: "territorios listados" });
+      await expect(filterStatus).toHaveText("0 visibles · 0 territorios listados");
+      await expect(filterStatus).toHaveAttribute("aria-live", "polite");
+      await expect(filterStatus).toHaveAttribute("aria-atomic", "true");
+      await expect(childRegion.getByRole("searchbox", { includeHidden: true })).toBeDisabled();
       for (const side of ["A", "B"]) await expect(main.getByRole("group", { name: new RegExp(`^Lado ${side}\\b`) })).toHaveCount(1);
       const appliedHeading = main.getByRole("heading", { name: "Resultados exactos", exact: true });
       await expect(appliedHeading).toHaveCSS("font-size", "20px");
