@@ -53,6 +53,51 @@ async function signInToMonitoredPage(page: Page): Promise<void> {
 const isSessionProbe = (request: { url(): string }): boolean => new URL(request.url()).pathname === "/api/session";
 
 test.describe("no anonymous read path", () => {
+  test("security baseline covers login, redirects, session API and hydrated authenticated pages", async ({ page, request }) => {
+    const assertHeaders = (headers: Record<string, string>) => {
+      expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+      expect(headers["content-security-policy"]).toMatch(/'nonce-[A-Za-z0-9+/=]+'/);
+      expect(headers["content-security-policy"]).not.toContain("unsafe-eval");
+      expect(headers["x-content-type-options"]).toBe("nosniff");
+      expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+      expect(headers["permissions-policy"]).toContain("camera=()");
+      expect(headers["x-robots-tag"]).toBe("noindex, nofollow");
+    };
+    const violations: string[] = [];
+    await page.exposeFunction("recordCspViolation", (directive: string) => violations.push(directive));
+    await page.addInitScript(() => document.addEventListener("securitypolicyviolation", event => {
+      void (window as unknown as { recordCspViolation(value: string): Promise<void> }).recordCspViolation(event.effectiveDirective);
+    }));
+    assertHeaders((await page.goto("/login"))!.headers());
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
+    const assetPath = await page.locator("script[src]").first().getAttribute("src");
+    expect(assetPath).toMatch(/^\/_next\/static\//);
+    const asset = await request.get(assetPath!);
+    expect(asset.status()).toBe(200);
+    expect(asset.headers()["content-security-policy"]).toContain("object-src 'none'");
+    expect(asset.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(asset.headers()["x-robots-tag"]).toBe("noindex, nofollow");
+    const redirect = await request.get("/dashboard", { maxRedirects: 0 });
+    expect(redirect.status()).toBe(307);
+    expect(new URL(redirect.headers().location!, environment.VOTUS_E2E_BASE_URL).pathname).toBe("/login");
+    assertHeaders(redirect.headers());
+    const anonymous = await request.get("/api/session");
+    expect(anonymous.status()).toBe(401);
+    assertHeaders(anonymous.headers());
+    await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
+    await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
+    await expect(page).toHaveURL(url => url.pathname === "/onboarding");
+    assertHeaders((await page.goto("/onboarding"))!.headers());
+    const missing = await page.request.get("/nonexistent-security-header-check");
+    expect(missing.status()).toBe(404);
+    assertHeaders(missing.headers());
+    const active = await page.request.get("/api/session");
+    expect(active.status()).toBe(200);
+    assertHeaders(active.headers());
+    expect(violations).toEqual([]);
+  });
+
   test("a supplied simulation survives anonymous sign-in and definitive session expiry", async ({ page, context, browser }) => {
     const fixtureContext = await browser.newContext({ storageState: environment.VOTUS_E2E_STORAGE_STATE });
     try {
