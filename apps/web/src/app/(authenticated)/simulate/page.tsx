@@ -602,7 +602,7 @@ export default async function SimulatePage({
       ) : null}
       {result ? (
         <section data-testid="allocation-result" aria-label="Resultado de la asignación">
-          <h2>Resultado ({allocationLevelLabel(result.level)})</h2>
+          <h2 id="simulation-result-heading" tabIndex={-1}>Resultado ({allocationLevelLabel(result.level)})</h2>
           <p>Proyección hipotética aportada por quien realiza la consulta</p>
           {granularity ? (
             <p>

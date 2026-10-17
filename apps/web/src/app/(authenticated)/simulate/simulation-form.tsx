@@ -102,15 +102,28 @@ interface SimulationFormProps {
   comparison: ReactNode;
 }
 
+type OperationFocus = "transfer-submit" | "sweep-submit" | "simulation-result-heading";
+
 interface TransferFormProps {
   requestKey: string;
-  navigate: (targetKey: string) => void;
+  navigate: (targetKey: string, focusTarget: OperationFocus) => void;
+}
+
+interface OperationErrors {
+  requestKey: string;
+  messages: readonly string[];
 }
 
 function TransferForm({ requestKey, navigate }: TransferFormProps) {
   const baseline = transferBaselineFromQuery(requestKey);
   const [controls, setControls] = useState({ donor: "", target: "", amount: "0" });
-  const [errors, action, pending] = useActionState<readonly string[], FormData>(
+  const [observedKey, setObservedKey] = useState(requestKey);
+  // Reset the draft for a changed baseline without replacing focused DOM nodes.
+  if (observedKey !== requestKey) {
+    setObservedKey(requestKey);
+    setControls({ donor: "", target: "", amount: "0" });
+  }
+  const [failure, action, pending] = useActionState<OperationErrors, FormData>(
     async (_previous, data) => {
       try {
         function field(name: string): string {
@@ -121,15 +134,16 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
           return entries[0];
         }
         const targetKey = transferSimulationQuery(requestKey, field("donor"), field("target"), field("amount"));
-        if (targetKey !== requestKey) navigate(targetKey);
-        return [];
+        if (targetKey !== requestKey) navigate(targetKey, "transfer-submit");
+        return { requestKey, messages: [] };
       } catch (error) {
-        return error instanceof SimulationFormError ? error.messages
-          : ["No se pudo transferir. Revise el escenario y la cantidad."];
+        return { requestKey, messages: error instanceof SimulationFormError ? error.messages
+          : ["No se pudo transferir. Revise el escenario y la cantidad."] };
       }
     },
-    [],
+    { requestKey, messages: [] },
   );
+  const errors = failure.requestKey === requestKey ? failure.messages : [];
   if (!baseline) return null;
   return (
     <form aria-label="Transferencia de votos a total fijo" action={action}
@@ -157,7 +171,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
       <div id="transfer-errors" aria-live="polite" aria-atomic="true">
         {errors.length ? <Alert variant="denied"><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></Alert> : null}
       </div>
-      <Button type="submit" disabled={pending}>Transferir votos</Button>
+      <Button id="transfer-submit" type="submit" disabled={pending}>Transferir votos</Button>
       <details className="simulation-help"><summary>Cómo funciona la transferencia</summary><p id="transfer-help">Operación hipotética a total fijo: resta votos de una lista y suma
         la misma cantidad a otra, sin cambiar los demás datos del escenario actual.
         Cero conserva exactamente el escenario. Al cambiar la base, seleccione las listas de nuevo.</p></details>
@@ -168,16 +182,22 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
 function SweepForm({ requestKey, navigate }: TransferFormProps) {
   const baseline = transferBaselineFromQuery(requestKey);
   const [controls, setControls] = useState({ donor: "", target: "", max: "0", step: "1" });
-  const [errors, action, pending] = useActionState<readonly string[], FormData>(
+  const [observedKey, setObservedKey] = useState(requestKey);
+  if (observedKey !== requestKey) {
+    setObservedKey(requestKey);
+    setControls({ donor: "", target: "", max: "0", step: "1" });
+  }
+  const [failure, action, pending] = useActionState<OperationErrors, FormData>(
     async (_previous, data) => {
       try {
-        navigate(simulationSweepQuery(requestKey, data));
-        return [];
+        navigate(simulationSweepQuery(requestKey, data), "sweep-submit");
+        return { requestKey, messages: [] };
       } catch (error) {
-        return error instanceof SimulationFormError ? error.messages : ["No se pudo preparar el muestreo."];
+        return { requestKey, messages: error instanceof SimulationFormError ? error.messages : ["No se pudo preparar el muestreo."] };
       }
-    }, [],
+    }, { requestKey, messages: [] },
   );
+  const errors = failure.requestKey === requestKey ? failure.messages : [];
   if (!baseline) return null;
   return (
     <form aria-label="Muestreo de transferencias a total fijo" action={action} noValidate
@@ -209,7 +229,7 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
       <div id="sweep-errors" aria-live="polite" aria-atomic="true">
         {errors.length ? <Alert variant="denied"><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></Alert> : null}
       </div>
-      <Button type="submit" disabled={pending}>Evaluar muestras</Button>
+      <Button id="sweep-submit" type="submit" disabled={pending}>Evaluar muestras</Button>
     </form>
   );
 }
@@ -248,6 +268,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
   const nextListId = useRef(2);
   const listNameInputRefs = useRef(new Map<string, HTMLInputElement>());
   const pendingListNameFocusId = useRef<string | null>(null);
+  const pendingOperationFocus = useRef<{ requestKey: string; target: OperationFocus } | null>(null);
 
   // Preserve controls across our own server responses, including superseded
   // requests. An external navigation restores its scenario instead.
@@ -416,7 +437,8 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
   const isNational = values.level === ALLOCATION_LEVEL.NATIONAL;
   const isMunicipal = values.level === ALLOCATION_LEVEL.PBA_MUNICIPAL;
   const totalsHelpId = isNational ? "national-totals-help" : "pba-totals-help";
-  function navigateOperation(targetKey: string) {
+  function navigateOperation(targetKey: string, focusTarget: OperationFocus) {
+    pendingOperationFocus.current = { requestKey: targetKey, target: focusTarget };
     cancelScheduledRequest();
     setEditor((current) => ({
       ...restoredEditor(targetKey),
@@ -429,6 +451,15 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
   const baselineKey = sweepBaselineQuery(requestKey);
   const showResult = !editor.dirty && errors.length === 0 && !isPending &&
     editor.targetKey === requestKey;
+
+  // A reset removes its link, and an action may temporarily disable its button.
+  // Restore only once the matching server response is current, never a stale one.
+  useEffect(() => {
+    const pendingFocus = pendingOperationFocus.current;
+    if (!pendingFocus || !showResult || pendingFocus.requestKey !== requestKey) return;
+    pendingOperationFocus.current = null;
+    document.getElementById(pendingFocus.target)?.focus();
+  }, [requestKey, showResult]);
 
   return (
     <div className={`simulation-workspace${editor.values === null ? " simulation-workspace--supplied" : ""}`}>
@@ -464,12 +495,12 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
       <aside className="simulation-scenario-panel" aria-label="Construir el supuesto">
         <h2>Construir el supuesto</h2>
         <p>Mover votos entre dos listas, sin cambiar el total.</p>
-        {showResult ? <TransferForm key={`transfer-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
+        <TransferForm requestKey={baselineKey} navigate={navigateOperation} />
         {showResult && impact && baseImpact ? <>
           <a className="simulation-reset" href={`/simulate?${simulationResetQuery(requestKey)}`} onClick={(event) => {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
-            navigateOperation(simulationResetQuery(requestKey));
+            navigateOperation(simulationResetQuery(requestKey), "simulation-result-heading");
             setDistributionView("scenario");
           }}>Restablecer base</a>
           <section aria-label="Impacto en la asignación">
@@ -752,7 +783,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
     </details>
     )}
     <div className="simulation-output" aria-busy={editor.dirty || isPending}>
-      {showResult ? <details className="simulation-disclosure"><summary>Sensibilidad de la transferencia</summary><SweepForm key={`sweep-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /></details> : null}
+      {transferBaselineFromQuery(baselineKey) ? <details className="simulation-disclosure"><summary>Sensibilidad de la transferencia</summary><SweepForm requestKey={baselineKey} navigate={navigateOperation} /></details> : null}
       <p role="status" className="simulation-output__status">
         {showResult ? "Escenario actual" : errors.length
           ? "Complete o corrija los campos para actualizar el resultado. El resultado anterior no se muestra."
