@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { circuitColor, circuitBandColor, shareFill, WINNER_COLORS, NEUTRAL_FILL, REFERENCE_COLOR, DOT_COLOR } from "@/components/maps/reference-colors";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -11,6 +12,42 @@ function luminance(hex: string) {
   });
   return rgb[0]! * 0.2126 + rgb[1]! * 0.7152 + rgb[2]! * 0.0722;
 }
+
+describe("text input boundary contrast", () => {
+  const css = (path: string) => readFileSync(new URL(`../../app/${path}`, import.meta.url), "utf8");
+  const globals = css("globals.css");
+  const token = (name: string) => globals.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6});`, "i"))?.[1];
+  it("keeps decorative borders unchanged and control borders at 3:1 against adjacent navy fills and containers", () => {
+    expect(token("--border")).toBe("#284255");
+    const border = token("--control-border");
+    expect(border).toBeDefined();
+    for (const background of [token("--surface-muted")!, token("--surface")!, token("--canvas")!, "#0d2130", "#091724"]) {
+      const ratio = (luminance(border!) + 0.05) / (luminance(background) + 0.05);
+      expect(ratio, background).toBeGreaterThanOrEqual(3);
+      process.stdout.write(`CONTROL_BORDER_CONTRAST ${background} ${ratio.toFixed(3)}\n`);
+    }
+  });
+  it.each([
+    ["panorama/panorama.module.css", ".lookup input"],
+    ["drilldown/drilldown.module.css", ".breakdownHeader input"],
+    ["drilldown/drilldown.module.css", ".navigatorSearch input"],
+    ["compare/comparison.module.css", ".childControls input"],
+    ["evidencia/evidence.module.css", ".field :is(select, input)"],
+  ])("applies the control token to the real %s %s rule", (path, selector) => {
+    const rule = css(`(authenticated)/${path}`).split(`${selector} {`)[1]?.split("}")[0];
+    expect(rule).toBeDefined();
+    expect(rule).toContain("border: 1px solid var(--control-border)");
+    const fill = rule!.match(/background: ([^;]+);/)?.[1];
+    if (fill === "var(--map-stage)") {
+      // This optional token is currently unset; the containing navy surface is tested above.
+      expect(globals).not.toMatch(/--map-stage\s*:/);
+    } else {
+      const background = fill?.startsWith("var(") ? token(fill.slice(4, -1)) : fill;
+      expect(background).toMatch(/^#[0-9a-f]{6}$/i);
+      expect((luminance(token("--control-border")!) + 0.05) / (luminance(background!) + 0.05)).toBeGreaterThanOrEqual(3);
+    }
+  });
+});
 
 describe("navy circuit margin contrast", () => {
   it("keeps shared electoral fills and reference marks at AA text contrast against both navy surfaces", () => {

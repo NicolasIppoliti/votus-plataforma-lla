@@ -8,7 +8,7 @@ export default function NotFound(): ReactNode {
       <div className="shell-container">
         <h1>Página no encontrada</h1>
         <p>La dirección no corresponde a ninguna sección de Votus.</p>
-        <p><Link href="/">Volver a Panorama</Link></p>
+        <p><Link href="/">Volver al inicio</Link></p>
       </div>
     </main>
   );

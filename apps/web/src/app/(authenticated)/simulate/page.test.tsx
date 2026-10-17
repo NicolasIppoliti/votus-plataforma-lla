@@ -125,8 +125,8 @@ describe("default-visible impact contracts", () => {
       unmodeledVotes: 0, unmodeledVoteBreakdown: [],
       threshold: { value: 3, basis: "padron" }, lists: ALLOCATION_INPUT.lists,
     });
-    expect(municipal.includes("<h2>Resultado (municipal de PBA)</h2>")).toBe(true);
-    expect(national.includes("<h2>Resultado (nacional)</h2>")).toBe(true);
+    expect(municipal.includes('<h2 id="simulation-result-heading" tabindex="-1">Resultado (municipal de PBA)</h2>')).toBe(true);
+    expect(national.includes('<h2 id="simulation-result-heading" tabindex="-1">Resultado (nacional)</h2>')).toBe(true);
   });
 });
 
@@ -163,8 +163,9 @@ vi.mock("react", async () => {
     ...actual,
     useState: <T,>(initial: T | (() => T)) => [typeof initial === "function" ? (initial as () => T)() : initial, () => {}],
     useTransition: () => [false, (callback: () => void) => callback()],
-    useActionState: (action: typeof transferHarness.actions[number], initial: readonly string[]) => {
-      transferHarness.actions.push(action);
+    useActionState: <T extends { messages: readonly string[] },>(action: (state: T, data: FormData) => Promise<T>, initial: T) => {
+      // Assert the user-visible messages independently of baseline bookkeeping.
+      transferHarness.actions.push(async (_previous, data) => (await action(initial, data)).messages);
       return [initial, () => {}, false];
     },
   };
