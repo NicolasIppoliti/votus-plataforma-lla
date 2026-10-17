@@ -61,8 +61,12 @@ Disposable timings describe only the fixture and current machine. They are not p
 
 Deploy the ETL name-persistence code before scheduling any backfill. Existing hosted rows gain
 `distrito_name`, `seccion_name`, and `circuito_name` only by replaying verified source archives
-through that deployed ETL path. The replay preserves source spelling (including code-like circuit
-names), normalized administrative codes, establishment names, and source isolation.
+through that deployed ETL path. National replay preserves source spelling (including code-like
+circuit names), normalized administrative codes, establishment names, and source isolation.
+PBA replay translates partido codes and names at the reviewed crosswalk boundary: its `distrito`
+is a partido, not the national province. Optional `national_distrito_name` and
+`national_seccion_name` fields carry national lineage names with a required `names_source`.
+Absent fields produce null names, never a guessed name from the PBA partido label.
 
 The hosted replay is a separate operational change and requires explicit authorization for the
 target project and archive set. This code change does not mutate a hosted database, and operators
@@ -70,6 +74,30 @@ MUST NOT replace the replay with a hardcoded SQL name migration or a source-name
 If the ETL deployment is rolled back, stop the replay and retain the verified archives for a later
 forward recovery; the explorer remains safe because absent or conflicting names render explicit
 status labels rather than fabricated names.
+
+### PBA 2025 Coronel Rosales correction (#609)
+
+After deploying this fix, prefer replay over a data migration. Preconditions: authorize the
+hosted project explicitly; verify the archived `pba/2025-distrito-027` bytes and registry election
+(2025/provinciales); review the crosswalk provenance; confirm the existing national-scheme
+section identity `02/027` has null names and null circuito/establecimiento/mesa. The title-case
+names match the national mesa lineage observed by the maintainer; the national 2025 CSV fixture
+uses uppercase spelling. Neither spelling is inferred from the PBA page's `CORONEL ROSALES`.
+
+With the approved direct hosted DSN supplied securely as `ETL_DATABASE_URL`, run from the
+repository root **only after separate operational authorization**:
+
+```sh
+uvx uv@0.12.19 --directory etl run --locked python -m etl ingest \
+  --source pba/2025-distrito-027 --year 2025 --round provinciales
+```
+
+Expected effect: fill `jurisdiction.distrito_name` with `Buenos Aires` and `seccion_name` with
+`Coronel de Marina L. Rosales` on the existing `02/027` section row. No second jurisdiction
+identity is created. The archive's provincial result projection is replayed idempotently;
+votes, totals, and section granularity remain unchanged. A conflicting non-null existing name
+rejects the replay rather than being overwritten. Other entries lacking reviewed names retain
+the visible `nombre no disponible` fallback. This correction was not executed against hosted data.
 
 ## Hosted preflight
 

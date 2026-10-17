@@ -19,6 +19,14 @@ jurisdictions:
     national_distrito: "02"
     national_seccion: "027"
     name: "Coronel de Marina Leonardo Rosales"
+    national_distrito_name: "Buenos Aires"
+    national_seccion_name: "Coronel de Marina L. Rosales"
+    names_source: >-
+      National 2025 lineage, distrito 02 / seccion 027: title-case spelling
+      observed by the maintainer in hosted national mesa jurisdictions (#609).
+      The national 2025 file uses uppercase BUENOS AIRES / CORONEL DE MARINA
+      L. ROSALES, as checked in etl/tests/fixtures/crosswalk_national_2025_sample.csv.
+      These display names are not copied from the PBA partido label.
     verified: true
     source: "spikes/001-granularity-and-join-keys.md (task 0.4)"
   - pba_distrito: "113"

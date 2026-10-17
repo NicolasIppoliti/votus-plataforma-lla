@@ -630,12 +630,13 @@ def resolve_pba_jurisdictions(
             if row.requested_granularity == row.result.granularity
             else row.requested_granularity
         )
-        # The PBA page calls a partido "Distrito". Only the reviewed crosswalk
-        # proves that this source-native label belongs to national seccion 027;
-        # assigning it before translation would incorrectly name distrito 02.
+        # PBA's partido label is not a national lineage name. Only reviewed
+        # national names belong here; missing names remain visibly unavailable.
+        entry = crosswalk.resolve_pba(row.result.distrito)
+        assert entry is not None  # The code resolver already rejected unmapped rows.
         translated_names = JurisdictionNames(
-            distrito=row.jurisdiction_names.distrito if national_seccion is None else None,
-            seccion=row.jurisdiction_names.distrito if national_seccion else None,
+            distrito=entry.national_distrito_name,
+            seccion=entry.national_seccion_name,
             circuito=row.jurisdiction_names.circuito,
             establecimiento=row.jurisdiction_names.establecimiento,
         )
@@ -662,7 +663,7 @@ def load_pba_rows(
 ) -> int:
     """Task 8.5 (D8): same delete-by-`archive_entry_id`-then-bulk-insert
     wrapper as `ingest.national.load_national_rows`, adapted to `PbaRow`'s
-    distrito-only lineage (`seccion`/`circuito`/`mesa` are always `None`
+    national seccion-level lineage (`circuito`/`mesa` are always `None`
     here -- `upsert_jurisdiction`'s `IS NOT DISTINCT FROM` lookup is exactly
     what makes that safe to re-run without duplicating the jurisdiction row).
 
