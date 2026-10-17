@@ -1287,6 +1287,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20261017000000_workspace_onboarding_completion.down.sql",
         "\\ir ../migrations/down/20261016000000_scope_official_facet_exclusions.down.sql",
         "\\ir ../migrations/down/20261015300000_non_positive_vote_kinds.down.sql",
         "\\ir ../migrations/down/20261015200000_projection_receipt.down.sql",
@@ -1399,6 +1400,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20261015200000_projection_receipt.sql",
         "\\ir ../migrations/20261015300000_non_positive_vote_kinds.sql",
         "\\ir ../migrations/20261016000000_scope_official_facet_exclusions.sql",
+        "\\ir ../migrations/20261017000000_workspace_onboarding_completion.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1413,7 +1415,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "77 as migration_inventory_count",
+        "78 as migration_inventory_count",
         "20261014000000-down,20261013000000-down,20261012000000-down,20261011000000-down,20260923000001-down",
         "20260923000001-up,20261011000000-up,20261012000000-up,20261013000000-up,20261014000000-up",
         "0037 internal facets base remained directly executable",
@@ -2549,6 +2551,7 @@ def test_organization_workspace_foundation_is_additive_and_closed_by_default() -
         "create function",
         "security definer",
         "enable row level security",
+        "force row level security",
         "create policy",
         "auth.",
         "password",
@@ -3227,3 +3230,28 @@ def test_legacy_results_public_contract_cutover_is_exact_and_reversible() -> Non
     assert "to anon" not in down and "to service_role" not in down
     assert "review_item_authenticated_read" not in down
     assert "review_item_unresolved_count to authenticated" not in down
+
+
+def test_onboarding_completion_is_owner_written_and_reversible() -> None:
+    up = _sql("20261017000000_workspace_onboarding_completion.sql")
+    down = _sql("down/20261017000000_workspace_onboarding_completion.down.sql")
+    for fragment in (
+        "create table workspace_private.onboarding_completion",
+        "primary key (user_id, organization_id)",
+        "enable row level security",
+        "'onboarding_completed',exists(",
+        "create function workspace_api.complete_onboarding()",
+        "on conflict do nothing",
+        "grant execute on function workspace_api.complete_onboarding() to authenticated",
+    ):
+        assert fragment in up
+    assert "drop function workspace_api.complete_onboarding()" in down
+    assert "drop table workspace_private.onboarding_completion" in down
+    assert "'onboarding_completed',exists(" not in down
+    assert "onboarding rollback refused: completion audit events must be retained" in down
+    assert "'onboarding_completed','succeeded'" in up
+    assert "if found then" in up
+    assert "c.claim_user_id is null" in up
+    for migration in (up, down):
+        assert "with inherit false, set true" in migration
+        assert "drop role %i" in migration
