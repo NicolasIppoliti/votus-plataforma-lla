@@ -1107,22 +1107,44 @@ html:has(.electoral-context) {
     flex: 1;
   }
 
-  .workspace-topbar__controls .workspace-footer,
+  .workspace-topbar__controls .workspace-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 0.4fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   .workspace-topbar__controls .workspace-footer form {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 0.5rem;
   }
 
   .workspace-topbar__controls select {
-    width: auto;
+    flex: 1 1 0;
+    width: 0;
+    min-width: 0;
     max-width: 18rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .workspace-topbar__controls :is(label, button, .workspace-account) {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .workspace-topbar__controls .workspace-account {
+    width: 5rem;
   }
 
   .workspace-topbar__controls .workspace-identity {
     margin: 0;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .app-shell {
@@ -1142,7 +1164,7 @@ html:has(.electoral-context) {
   }
 
   .workspace-topbar__inner {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 0.5rem;
     min-height: calc(4rem - 1px);
   }
@@ -1159,6 +1181,8 @@ html:has(.electoral-context) {
   }
 
   .workspace-topbar__inner .review-alert {
+    flex-shrink: 0;
+    white-space: nowrap;
     max-width: 22rem;
     padding: 0;
     font-size: 0.8125rem;

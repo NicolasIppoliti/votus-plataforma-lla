@@ -13,6 +13,34 @@ import { prepareOrganization } from "./onboarding";
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
 
+for (const width of [1440, 981]) {
+  test(`desktop topbar stays one bounded 64px row with a long organization at ${width}px`, async ({ page }) => {
+    const organizationName = "Coordinación Electoral de la Sexta Sección — Coronel Rosales y distritos de la región";
+    await withReviewItem(page, async () => {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto("/dashboard");
+      const topbar = page.locator(".workspace-topbar");
+      await expect(topbar.getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)" })).toBeVisible();
+      const selector = topbar.getByRole("combobox", { name: "Organización", exact: true });
+      await expect(selector.locator("option:checked")).toHaveText(organizationName);
+      const box = await topbar.boundingBox();
+      expect(box!.height).toBe(64);
+      const geometry = await topbar.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return [...element.querySelectorAll("select, button, summary, .review-alert a")]
+          .filter(control => control.getBoundingClientRect().width > 0)
+          .map(control => {
+            const rect = control.getBoundingClientRect();
+            return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+          });
+      });
+      expect(geometry.length).toBeGreaterThan(0);
+      expect(geometry.every(Boolean)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }, { organizationName });
+  });
+}
+
 for (const width of [320, 390]) {
   test(`every route and workspace form stays readable at ${width}px (#463)`, async ({ page }) => {
     // Existing authorized fixture; no screenshots or data dumps are retained.
