@@ -2951,7 +2951,7 @@ describe("base contracts", () => {
 			"utf8",
 		);
 		expect(fixtureSql).toContain(
-			"create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid) returns jsonb",
+			"create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid, p_organization_name text default 'E2E Authorized Review Browser') returns jsonb",
 		);
 		expect(fixtureSql).toContain(
 			"create function public.e2e_cleanup_authorized_review_fixture(p_fixture jsonb) returns jsonb",
@@ -2980,13 +2980,13 @@ describe("base contracts", () => {
 		for (const predicate of [/join workspace_private\.organization_membership membership on membership\.organization_id\s*=\s*organization\.id\s+where organization\.id\s*=\s*fixture_organization_id[\s\S]*?membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null/, /not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+entitlement\.revoked_at\s+is\s+null\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)/, /fixture_has_extra and not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+entitlement\.revoked_at\s+is\s+null\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)/, /exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+\(not fixture_has_extra or \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)/]) expect(revoke).toMatch(predicate);
 		expect(revoke).toMatch(/update workspace_private\.organization_section_entitlement set revoked_at\s*=\s*statement_timestamp\(\)\s+where organization_id\s*=\s*fixture_organization_id\s+and\s+revoked_at\s+is\s+null\s+and\s+\(\(distrito_code,\s*seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+or\s+\(fixture_has_extra\s+and\s+\(distrito_code,\s*seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)\);\s+get diagnostics revoked_scope_count = row_count;\s+if revoked_scope_count <> \(case when fixture_has_extra then 2 else 1 end\)/);
 		expect(fixtureSql).toContain(
-			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated",
+			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid, text) from public, anon, authenticated",
 		);
 		expect(fixtureSql).toContain(
 			"revoke all on function public.e2e_cleanup_authorized_review_fixture(jsonb) from public, anon, authenticated",
 		);
 		expect(fixtureSql).toContain(
-			"grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid) to service_role",
+			"grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid, text) to service_role",
 		);
 		expect(fixtureSql).toContain(
 			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
